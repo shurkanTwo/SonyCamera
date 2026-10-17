@@ -215,6 +215,17 @@ namespace
         std::unique_ptr<CameraProperty> copy(property.Clone());
         Check(copy->GetCurrentValue()->GetUINT16() == 0, "property clone lost its current value");
         Check(copy->GetInfo()->GetDefault() == nullptr, "property clone invented missing default");
+
+        // Construction must initialize ownership even when storage is reused.
+        // Poisoning the destination makes an uninitialized pointer deterministic.
+        alignas(CameraProperty) unsigned char storage[sizeof(CameraProperty)];
+        memset(storage, 0xa5, sizeof(storage));
+        std::cerr << "[DEBUG-native-removal] PropertyCopyOwnership\n";
+        CameraProperty* reused = new (storage) CameraProperty(property);
+        Check(reused->GetCurrentValue()->GetUINT16() == 0, "copy into reused storage lost value");
+        reused->SetCurrentValue(new PropertyValue(static_cast<UINT16>(7)));
+        Check(property.GetCurrentValue()->GetUINT16() == 0, "property copy shared owned value");
+        reused->~CameraProperty();
     }
 
     void TerminalFailures()
