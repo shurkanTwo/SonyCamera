@@ -10,8 +10,8 @@ refreshSettings(CameraTaskInfo& info)
 {
     try
     {
-        info.pCamera->RefreshSettings((int)info.pTask->GetParam1() != 0 ? true : false);
-        info.pCamera->RecordSettingsRefreshResult(true);
+        bool succeeded = info.pCamera->RefreshSettings((int)info.pTask->GetParam1() != 0);
+        info.pCamera->RecordSettingsRefreshResult(succeeded);
     }
     catch (CameraException& ex)
     {
@@ -194,7 +194,16 @@ downloadImage(CameraTaskInfo& info)
         }
     }
 
+    if (imageCount == 0) info.pCamera->SetCaptureStatus(CaptureStatus::Failed);
     return imageCount > 0 ? StateResult::Success : StateResult::Fail;
+}
+
+StateResult
+failCapture(CameraTaskInfo& info)
+{
+    refreshSettings(info);
+    info.pCamera->SetCaptureStatus(CaptureStatus::Failed);
+    return StateResult::Fail;
 }
 
 StateResult

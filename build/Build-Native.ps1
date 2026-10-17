@@ -5,6 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+$release = Get-Content (Join-Path $PSScriptRoot 'Release.json') -Raw | ConvertFrom-Json
 $depRoot = Join-Path $root ".build/dependencies/$Architecture"
 $output = Join-Path $root ".build/output/$Architecture"
 $librawCommit = '979160ff13c89e1158b1995975c23ed7497b6b62' # LibRaw 0.21.0, matching the vendored headers
@@ -94,7 +95,7 @@ Copy-Item "$jpegBuild/Release/turbojpeg.dll" $output
 $toolName = if ($Architecture -eq 'x64') { 'SonyCameraInfo64.exe' } else { 'SonyCameraInfo.exe' }
 foreach ($file in @('SonyMTPCamera.dll', $toolName)) {
     $version = (Get-Item (Join-Path $output $file)).VersionInfo.FileVersion
-    if ($version -ne '1.0.1.22') { throw "Unexpected file version for $file`: $version" }
+    if ($version -ne $release.nativeVersion) { throw "Unexpected file version for $file`: $version" }
 }
 $help = & (Join-Path $output $toolName) /h
 if ($LASTEXITCODE -ne 0) { throw 'Diagnostic tool help/load check failed.' }
@@ -106,6 +107,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Native DLL smoke check failed.' }
 $smokeResult | Set-Content "$output/SMOKE.json" -Encoding utf8
 Write-Host $smokeResult
 & (Join-Path $root 'tests/Test-TransferBuffer.ps1') -OutputDirectory $output
+& (Join-Path $root 'tests/Test-DeviceRemoval.ps1') -OutputDirectory $output -DependencyRoot $depRoot
 $sourceCommit = if (Test-Path "$root/SOURCE_REVISION") {
     (Get-Content "$root/SOURCE_REVISION" -Raw).Trim()
 } else {
@@ -115,7 +117,7 @@ $sourceCommit = if (Test-Path "$root/SOURCE_REVISION") {
 @{
     architecture = $Architecture
     sourceCommit = $sourceCommit
-    nativeVersion = '1.0.1.22'
+    nativeVersion = $release.nativeVersion
     diagnosticToolHelpVerified = $true
     libraw = @{ version = '0.21.0'; commit = $librawCommit }
     libjpegTurbo = @{ version = '2.0.3'; commit = $jpegCommit; simd = $true }

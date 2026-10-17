@@ -19,7 +19,7 @@ public:
     ~CameraWorker();
 
     void OnCameraStateChange(CameraState newState);
-    bool QueueTask(CameraTask* task, HANDLE waiter);
+    bool QueueTask(CameraTask* task, HANDLE waiter, DWORD timeout = INFINITE);
 
     static DWORD WINAPI _run(LPVOID lpParameter);
     DWORD Run();

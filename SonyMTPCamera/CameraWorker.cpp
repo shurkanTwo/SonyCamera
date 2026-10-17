@@ -214,14 +214,14 @@ DWORD CameraWorker::Run()
 }
 
 bool
-CameraWorker::QueueTask(CameraTask* task, HANDLE waiter)
+CameraWorker::QueueTask(CameraTask* task, HANDLE waiter, DWORD timeout)
 {
     // Wait for runner thread to be idle
-    DWORD waitResult = WaitForSingleObject(mutexHandle, INFINITE);
+    DWORD waitResult = WaitForSingleObject(mutexHandle, timeout);
 
     if (waitResult != WAIT_OBJECT_0)
     {
-        // Need to error here
+        return false;
     }
 
     // If there is a waiter, just queue it up - if there is no waiter, look thru

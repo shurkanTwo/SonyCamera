@@ -55,7 +55,7 @@ public:
     std::wstring Name();
     bool SupportsCameraState(CameraState state);
     void Start(Camera* camera);
-    bool QueueAndForget(Camera* camera);
+    bool QueueAndForget(Camera* camera, DWORD timeout = INFINITE);
     DWORD Cancel(DWORD timeout);
     DWORD WaitFor(DWORD timeout);
     HANDLE GetCancelEventHandle() const;

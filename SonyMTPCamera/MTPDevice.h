@@ -30,6 +30,7 @@ public:
 protected:
     virtual Message* InternalSend(Op kind, Message* out);
     virtual void OnGone();
+    virtual HRESULT CreatePortableDevice(IPortableDevice** device);
 
 private:
     void InitManufacturer();

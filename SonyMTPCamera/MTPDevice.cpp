@@ -65,8 +65,11 @@ MTPDevice::Open()
 {
     LOGTRACE(L"In: MTPDevice::Open");
 
-    // Opening is the point at which the device is presumed present again.
-    InterlockedExchange(&m_gone, 0);
+    // A reference to the existing session cannot recover a departed device.
+    if (m_openCount > 0 && IsGone())
+    {
+        return INVALID_HANDLE_VALUE;
+    }
 
     if (m_openCount == 0)
     {
@@ -76,10 +79,7 @@ MTPDevice::Open()
 
         LOGTRACE(L"Opening PortableDevice via COM");
 
-        HRESULT hr = CoCreateInstance(CLSID_PortableDevice,
-            nullptr,
-            CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&m_device));
+        HRESULT hr = CreatePortableDevice(&m_device);
 
         if (SUCCEEDED(hr))
         {
@@ -94,6 +94,7 @@ MTPDevice::Open()
 
             if (SUCCEEDED(hr))
             {
+                InterlockedExchange(&m_gone, 0);
                 m_openCount++;
                 m_handle = CreateEvent(nullptr, false, false, nullptr);
 
@@ -138,7 +139,7 @@ MTPDevice::Close()
     {
         if (m_openCount == 1)
         {
-//            StopNotifications();
+            StopNotifications();
             LOGINFO(L"MTPDevice::Close - opencount == 1, issuing actual close on device");
 
             // Per MS, close is automatically done when release bumps open count to 0
@@ -189,10 +190,19 @@ MTPDevice::Close()
 bool
 MTPDevice::StartNotifications(Camera* camera)
 {
+    if (IsGone() || !m_device) return false;
+
     if (!m_eventHandler)
     {
         // Set up event handler
         m_eventHandler = new DeviceEventHandler(m_device, camera);
+    }
+
+    if (!m_eventHandler->IsRegistered())
+    {
+        m_eventHandler->Release();
+        m_eventHandler = nullptr;
+        return false;
     }
 
     return true;
@@ -203,8 +213,11 @@ MTPDevice::StopNotifications()
 {
     if (m_eventHandler)
     {
-        delete m_eventHandler;
+        DeviceEventHandler* handler = m_eventHandler;
         m_eventHandler = nullptr;
+        HRESULT hr = handler->Stop();
+        handler->Release(); // WPD/in-flight callbacks retain their own references.
+        return SUCCEEDED(hr);
     }
 
     return true;
@@ -426,7 +439,7 @@ MTPDevice::InternalSend(Device::Op kind, Message* out)
 {
 //    LOGTRACE(L"In: MTPDevice::InternalSend");
 
-    if (IsGone())
+    if (IsGone() || !m_device)
     {
         // The device has already told us it is not there.  Everything that
         // talks to it comes through here, so this one check keeps the whole
@@ -921,10 +934,11 @@ MTPDevice::Send(Message* out)
     // This method returns a message, so we need to ensure it's deleted
     Message *in = InternalSend(method, out);
 
+    bool succeeded = in && in->IsSuccess();
     delete in;
 //    LOGTRACE(L"Out: MTPDevice::Send");
 
-    return true;
+    return succeeded;
 }
 
 Message*
@@ -997,4 +1011,11 @@ MTPDevice::IsDeviceGoneResult(HRESULT hr)
         || hr == HRESULT_FROM_WIN32(ERROR_DEVICE_REMOVED)
         || hr == HRESULT_FROM_WIN32(ERROR_NO_SUCH_DEVICE)
         || hr == RPC_E_DISCONNECTED;
+}
+
+HRESULT
+MTPDevice::CreatePortableDevice(IPortableDevice** device)
+{
+    return CoCreateInstance(CLSID_PortableDevice, nullptr, CLSCTX_INPROC_SERVER,
+        IID_IPortableDevice, reinterpret_cast<void**>(device));
 }

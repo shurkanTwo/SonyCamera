@@ -18,6 +18,7 @@ Camera::Camera(Device* device)
 
 Camera::~Camera()
 {
+    m_device->StopNotifications();
     delete pWorker;
     pWorker = nullptr;
 
@@ -93,12 +94,41 @@ Camera::OnPropertiesUpdated()
 {
     RefreshPropertiesTask* task = new RefreshPropertiesTask(false);
 
-    if (!task->QueueAndForget(this))
+    if (!task->QueueAndForget(this, 0))
     {
         LOGTRACE(L"Removing unqueued task");
         // It didn't get queued
         delete task;
     }
+}
+
+namespace
+{
+    class ImageBufferNotificationTask : public CameraTask
+    {
+    public:
+        ImageBufferNotificationTask(ImageBufferStatus status)
+            : CameraTask(L"ImageBufferNotification")
+        {
+            SetParam1(reinterpret_cast<void*>(static_cast<UINT_PTR>(status)));
+            StateStepInfo step = {};
+            step.id = 0;
+            step.isTerminal = true;
+            step.handler = [](CameraTaskInfo& info) {
+                info.pCamera->OnImageBufferStatus(static_cast<ImageBufferStatus>(
+                    reinterpret_cast<UINT_PTR>(info.pTask->GetParam1())));
+                return StateResult::Success;
+            };
+            AddStep(step);
+        }
+    };
+}
+
+void
+Camera::QueueImageBufferStatus(ImageBufferStatus status)
+{
+    auto* task = new ImageBufferNotificationTask(status);
+    if (!task->QueueAndForget(this, 0)) delete task;
 }
 
 void
@@ -168,7 +198,8 @@ Camera::GetDeviceInfo() const
 bool
 Camera::RefreshDeviceInfo()
 {
-    m_device->Open();
+    HANDLE handle = m_device->Open();
+    if (handle == INVALID_HANDLE_VALUE || handle == nullptr) return false;
 
     Message* tx;
     Message* rx;
@@ -434,7 +465,7 @@ Camera::GetImageInfo(DWORD id)
     // caller give up, which is what it does with a null image anyway.
     ObjectInfo* info = nullptr;
 
-    if (rx && rx->GetDataLen() > 0)
+    if (rx && rx->IsSuccess() && rx->GetDataLen() > 0)
     {
         info = new ObjectInfo(rx);
     }
@@ -474,7 +505,10 @@ Camera::GetImage(DWORD id)
         tx->AddParam(id);
         rx = m_device->Receive(tx);
 
-        image = new Image(info, rx);
+        if (rx && rx->IsSuccess() && rx->GetDataLen() > 0)
+        {
+            image = new Image(info, rx);
+        }
 
         delete rx;
         delete tx;
@@ -484,6 +518,8 @@ Camera::GetImage(DWORD id)
         // Failed
         LOGWARN(L"Unable to fetch image x%08x", id);
     }
+
+    if (!image) delete info;
 
     LOGTRACE(L"Out: Camera::GetImage(x%08x)", id);
 
