@@ -24,8 +24,18 @@ if ($LASTEXITCODE -ne 0) { throw 'MSVC environment setup failed.' }
 foreach ($line in $environment) {
     if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') }
 }
-$env:PATH = "${env:ProgramFiles}/NASM;$env:PATH"
-if (!(Get-Command nasm -ErrorAction SilentlyContinue)) { throw 'NASM is required to preserve libjpeg-turbo SIMD support.' }
+$nasmRoot = Join-Path $root '.build/tools/nasm-2.16.03'
+if (!(Test-Path "$nasmRoot/nasm.exe")) {
+    $archive = Join-Path $root '.build/tools/nasm-2.16.03-win64.zip'
+    New-Item -ItemType Directory -Force -Path (Split-Path $archive) | Out-Null
+    Invoke-WebRequest 'https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip' -OutFile $archive
+    if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6') {
+        throw 'NASM archive checksum mismatch.'
+    }
+    Expand-Archive $archive (Split-Path $archive) -Force
+}
+$env:PATH = "$nasmRoot;$env:PATH"
+if (!(Get-Command nasm -ErrorAction SilentlyContinue)) { throw 'Pinned NASM executable was not found.' }
 New-Item -ItemType Directory -Force -Path $depRoot, $output | Out-Null
 
 function Get-PinnedSource {
