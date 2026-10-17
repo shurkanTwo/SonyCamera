@@ -8,7 +8,9 @@ Windows automated checks and the complete source rebuild must pass before hardwa
 
 ## 1.0.1.22-preview.1 — 2026-10-17
 
-Community native-driver prerelease maintained by @shurkanTwo, based on @dougforpres's workerThread commit `21f469f6d2e9516ec4896eaa0ec9c45c4e96d92d` (native version 1.0.1.21).
+Published as a regular GitHub release marked Latest. The original preview.1 tag, binary/source assets and checksums are retained; this changes release visibility and leaves the verified runtime build intact. Experimental device-removal PR #16 remains separate.
+
+Community native-driver release maintained by @shurkanTwo, based on @dougforpres's workerThread commit `21f469f6d2e9516ec4896eaa0ec9c45c4e96d92d` (native version 1.0.1.21).
 
 - Merge [@totoantibes's upstream PR #17](https://github.com/dougforpres/SonyCamera/pull/17), original commit `ac9bf1feb9ed6d24f587176905d7c7818ae64787`. Replace the mistaken `2 ^ 23` XOR value (21 bytes) with a named 8 MiB allocation floor, capped by reported transfer size. Larger optimal transfer sizes and Maximum Memory Mode retain their previous behavior. This is not a fixed 8 MiB upper bound.
 - Publish x86/x64 native DLL and diagnostic-tool builds. Build LibRaw 0.21.0 and libjpeg-turbo 2.0.3 from pinned source matching the vendored headers; these are not claimed to reproduce the upstream installer binaries exactly.
