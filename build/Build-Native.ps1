@@ -1,5 +1,7 @@
 param(
-    [ValidateSet('x86', 'x64')][string]$Architecture = 'x64'
+    [ValidateSet('x86', 'x64')][string]$Architecture = 'x64',
+    [switch]$DependenciesOnly,
+    [switch]$SkipDependencies
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -41,6 +43,20 @@ New-Item -ItemType Directory -Force -Path $depRoot, $output | Out-Null
 function Get-PinnedSource {
     param([string]$Name, [string]$Repository, [string]$Commit)
     $path = Join-Path $depRoot $Name
+    $bundled = Join-Path $root "third-party/$Name"
+    if (Test-Path "$bundled/SOURCE_REVISION") {
+        if ((Get-Content "$bundled/SOURCE_REVISION" -Raw).Trim() -ne $Commit) {
+            throw "Unexpected bundled source revision for $Name."
+        }
+        if (!(Test-Path "$path/SOURCE_REVISION")) {
+            if (Test-Path $path) { Remove-Item $path -Recurse -Force }
+            Copy-Item $bundled $path -Recurse
+        }
+        if ((Get-Content "$path/SOURCE_REVISION" -Raw).Trim() -ne $Commit) {
+            throw "Unexpected copied source revision for $Name."
+        }
+        return $path
+    }
     if (!(Test-Path "$path/.git")) {
         Invoke-Checked git @('init', '--quiet', $path)
         Invoke-Checked git @('-C', $path, 'remote', 'add', 'origin', "https://github.com/$Repository.git")
@@ -54,7 +70,7 @@ function Get-PinnedSource {
 
 $libraw = Get-PinnedSource 'LibRaw' 'LibRaw/LibRaw' $librawCommit
 $jpeg = Get-PinnedSource 'libjpeg-turbo' 'libjpeg-turbo/libjpeg-turbo' $jpegCommit
-if (!(Test-Path "$libraw/bin/libraw.dll")) {
+if (!$SkipDependencies -and !(Test-Path "$libraw/bin/libraw.dll")) {
     Push-Location $libraw
     try {
         New-Item -ItemType Directory -Force -Path 'object', 'lib', 'bin' | Out-Null
@@ -63,18 +79,44 @@ if (!(Test-Path "$libraw/bin/libraw.dll")) {
 }
 $platform = if ($Architecture -eq 'x64') { 'x64' } else { 'Win32' }
 $jpegBuild = Join-Path $depRoot 'jpeg-build'
-Invoke-Checked cmake @('-S', $jpeg, '-B', $jpegBuild, '-G', 'Visual Studio 17 2022', '-A', $platform,
+if (!$SkipDependencies) {
+    Invoke-Checked cmake @('-S', $jpeg, '-B', $jpegBuild, '-G', 'Visual Studio 17 2022', '-A', $platform,
     '-DCMAKE_POLICY_VERSION_MINIMUM=3.5', '-DENABLE_SHARED=ON', '-DENABLE_STATIC=OFF', '-DWITH_SIMD=ON', '-DWITH_CRT_DLL=ON', '-DBUILD=20261017')
-Invoke-Checked cmake @('--build', $jpegBuild, '--config', 'Release', '--target', 'turbojpeg', '--parallel', '2')
+    Invoke-Checked cmake @('--build', $jpegBuild, '--config', 'Release', '--target', 'turbojpeg', '--parallel', '2')
+}
+if ($DependenciesOnly) { return }
 foreach ($project in @('SonyMTPCamera/SonyMTPCamera.vcxproj', 'SonyCameraInfo/SonyCameraInfo.vcxproj')) {
     Invoke-Checked msbuild @((Join-Path $root $project), '/m:2', '/verbosity:minimal', '/p:Configuration=Release',
         "/p:Platform=$platform", "/p:SolutionDir=$root/", "/p:SonyDependencyRoot=$depRoot", "/p:SonyOutputRoot=$output")
 }
 Copy-Item "$libraw/bin/libraw.dll" $output
 Copy-Item "$jpegBuild/Release/turbojpeg.dll" $output
+$toolName = if ($Architecture -eq 'x64') { 'SonyCameraInfo64.exe' } else { 'SonyCameraInfo.exe' }
+foreach ($file in @('SonyMTPCamera.dll', $toolName)) {
+    $version = (Get-Item (Join-Path $output $file)).VersionInfo.FileVersion
+    if ($version -ne '1.0.1.22') { throw "Unexpected file version for $file`: $version" }
+}
+$help = & (Join-Path $output $toolName) /h
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic tool help/load check failed.' }
+Write-Host ($help -join "`n")
+$smoke = Join-Path $output 'NativeSmoke.exe'
+Invoke-Checked cl @('/nologo', '/EHsc', '/std:c++20', (Join-Path $root 'tests/NativeSmoke.cpp'), "/Fe$smoke", "/Fo$output/NativeSmoke.obj", '/link', 'kernel32.lib')
+$smokeResult = & $smoke $output
+if ($LASTEXITCODE -ne 0) { throw 'Native DLL smoke check failed.' }
+$smokeResult | Set-Content "$output/SMOKE.json" -Encoding utf8
+Write-Host $smokeResult
+& (Join-Path $root 'tests/Test-TransferBuffer.ps1') -OutputDirectory $output
+$sourceCommit = if (Test-Path "$root/SOURCE_REVISION") {
+    (Get-Content "$root/SOURCE_REVISION" -Raw).Trim()
+} else {
+    & git -C $root rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Source revision could not be read.' }
+}
 @{
     architecture = $Architecture
-    sourceCommit = (& git -C $root rev-parse HEAD)
+    sourceCommit = $sourceCommit
+    nativeVersion = '1.0.1.22'
+    diagnosticToolHelpVerified = $true
     libraw = @{ version = '0.21.0'; commit = $librawCommit }
     libjpegTurbo = @{ version = '2.0.3'; commit = $jpegCommit; simd = $true }
     visualStudio = $vs

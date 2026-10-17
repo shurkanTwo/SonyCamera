@@ -1,7 +1,7 @@
 name: Build and verify native Sony driver
 on:
   push:
-    branches: [workerThread, 'maintenance/**']
+    branches: [workerThread]
   pull_request:
     branches: [workerThread]
   workflow_dispatch:
@@ -17,9 +17,28 @@ jobs:
         architecture: [x86, x64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build pinned dependencies and unchanged native driver
+        with:
+          fetch-depth: 0
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: dependencies
+        with:
+          path: |
+            .build/dependencies/${{ matrix.architecture }}
+            .build/tools
+          key: native-windows2022-${{ matrix.architecture }}-libraw0210-jpeg203-nasm21603-v1
+      - name: Build pinned native dependencies
         shell: pwsh
-        run: ./build/Build-Native.ps1 -Architecture '${{ matrix.architecture }}'
+        run: ./build/Build-Native.ps1 -Architecture '${{ matrix.architecture }}' -DependenciesOnly
+      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        with:
+          path: |
+            .build/dependencies/${{ matrix.architecture }}
+            .build/tools
+          key: native-windows2022-${{ matrix.architecture }}-libraw0210-jpeg203-nasm21603-v1
+      - name: Build native driver and verify exports/buffer sizing
+        shell: pwsh
+        run: ./build/Build-Native.ps1 -Architecture '${{ matrix.architecture }}' -SkipDependencies
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -28,5 +47,43 @@ jobs:
           path: |
             .build/output/${{ matrix.architecture }}/*.dll
             .build/output/${{ matrix.architecture }}/*.exe
-            .build/output/${{ matrix.architecture }}/BUILD.json
+            .build/output/${{ matrix.architecture }}/*.json
           if-no-files-found: warn
+  package:
+    needs: windows
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: native-*
+          path: .build/artifacts
+      - name: Package binaries, matching source and checksums
+        run: python3 build/Package-Native.py --artifacts .build/artifacts --output .build/packages
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-release-packages
+          path: .build/packages/*
+          if-no-files-found: error
+  source-build:
+    needs: package
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-release-packages
+          path: packages
+      - name: Rebuild x64 from the complete source ZIP without a Git checkout
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'sony-source-check'
+          Expand-Archive 'packages/SonyCamera-native-1.0.1.22-preview.1-source.zip' $destination
+          & "$destination/SonyCamera-native/build/Build-Native.ps1" -Architecture x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-build-verification
+          path: ${{ runner.temp }}/sony-source-check/SonyCamera-native/.build/output/x64/*.json
+          if-no-files-found: error

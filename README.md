@@ -1,4 +1,15 @@
 # SonyCamera
+
+## Community maintenance
+
+This is @shurkanTwo's maintenance fork of [@dougforpres/SonyCamera](https://github.com/dougforpres/SonyCamera). @dougforpres and the original contributors retain credit for the project. Original commits and copyright notices are preserved.
+
+The maintained branch is **workerThread**. [Downloads](https://github.com/shurkanTwo/SonyCamera/releases), [manual installation and rollback](INSTALLATION.md), [build instructions](build/README.md), [changes](RELEASE-NOTES.md), and [upstream PR #17 review](docs/REVIEW-PR17.md) are available here. The first native release is a **prerelease for hardware testing**; Windows CI does not establish camera or ASCOM/NINA compatibility.
+
+This fork maintains the GPLv3 native DLL and diagnostic tool. The separate ASCOM wrapper is not included in these packages. See the [public fork review](docs/FORK-REVIEW.md) for other existing forks and the work that remains separate.
+
+## Original project description
+
 Windows DLL Connecting to Sony Camera via USB
 
 1st draft of README. For now, see https://retro.kiwi/
