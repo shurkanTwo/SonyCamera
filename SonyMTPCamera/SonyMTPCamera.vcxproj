@@ -270,6 +270,7 @@
     <None Include="..\ChangeLog.md" />
     <None Include="..\README.md" />
   </ItemGroup>
+  <Import Project="..\build\NativeDependencies.props" Condition="Exists('..\build\NativeDependencies.props')" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
