@@ -1,5 +1,7 @@
 # SonyCamera
 
+**Experimental device-removal branch:** candidate 1.0.1.23-device-removal-test.1 is separate from the published regular release. See [hardware testing and acceptance](HARDWARE-TESTING.md).
+
 ## Community maintenance
 
 This is @shurkanTwo's maintenance fork of [@dougforpres/SonyCamera](https://github.com/dougforpres/SonyCamera). @dougforpres and the original contributors retain credit for the project. Original commits and copyright notices are preserved.

@@ -27,7 +27,7 @@ PropertyInfo::Copy(const PropertyInfo* rhs)
     m_type = rhs->m_type;
     m_access = rhs->m_access;
     m_sonySpare = rhs->m_sonySpare;
-    SetDefault(new PropertyValue(*rhs->m_default));
+    SetDefault(rhs->m_default ? new PropertyValue(*rhs->m_default) : nullptr);
     m_form = rhs->m_form;
     SetRange(rhs->m_rangeLo ? new PropertyValue(*rhs->m_rangeLo) : nullptr,
         rhs->m_rangeHi ? new PropertyValue(*rhs->m_rangeHi) : nullptr,

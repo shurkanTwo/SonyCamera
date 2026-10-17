@@ -10,13 +10,21 @@ refreshSettings(CameraTaskInfo& info)
 {
     try
     {
-        info.pCamera->RefreshSettings((int)info.pTask->GetParam1() != 0 ? true : false);
+        bool succeeded = info.pCamera->RefreshSettings((int)info.pTask->GetParam1() != 0);
+        info.pCamera->RecordSettingsRefreshResult(succeeded);
     }
     catch (CameraException& ex)
     {
+        info.pCamera->RecordSettingsRefreshResult(false);
+
         LOGWARN(L"Error refreshing settings... going to ignore '%s'", ex.GetMessage().c_str());
     }
 
+    // Still Success on failure, deliberately.  This is step 0 of the capture,
+    // download and preview tasks, all of which have failure branches, and a
+    // camera declining a single property must not abort a capture.  The
+    // failure is instead recorded above, and acted on by the worker's idle
+    // loop, which is the only place that polls without being asked to.
     return StateResult::Success;
 }
 
@@ -173,9 +181,32 @@ downloadImage(CameraTaskInfo& info)
             std::unique_ptr<CameraSettings> cs(info.pCamera->GetSettings());
             imageReady = isImageReady(cs.get());
         }
+        else
+        {
+            // No image came back.  Without this the loop never re-evaluates
+            // imageReady and spins forever - which is what happens when the
+            // camera is disconnected mid-download: every pass asks a device
+            // that is no longer there for an object info, builds one from the
+            // failed response, and reads past the end of an empty buffer.
+            LOGWARN(L"No image returned for image #%d - stopping the download loop", imageCount + 1);
+
+            delete static_cast<Image*>(info.pTask->GetResult());
+            info.pTask->SetResult(nullptr);
+            info.pCamera->SetCaptureStatus(CaptureStatus::Failed);
+            return StateResult::Fail;
+        }
     }
 
+    if (imageCount == 0) info.pCamera->SetCaptureStatus(CaptureStatus::Failed);
     return imageCount > 0 ? StateResult::Success : StateResult::Fail;
+}
+
+StateResult
+failCapture(CameraTaskInfo& info)
+{
+    refreshSettings(info);
+    info.pCamera->SetCaptureStatus(CaptureStatus::Failed);
+    return StateResult::Fail;
 }
 
 StateResult

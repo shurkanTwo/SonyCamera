@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import struct
 import subprocess
@@ -11,7 +12,8 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.0.1.22-preview.1"
+RELEASE = json.loads((ROOT / "build/Release.json").read_text(encoding="utf-8"))
+VERSION = RELEASE["packageVersion"]
 BASELINE = "21f469f6d2e9516ec4896eaa0ec9c45c4e96d92d"
 DEPENDENCIES = {
     "LibRaw": ("LibRaw/LibRaw", "979160ff13c89e1158b1995975c23ed7497b6b62"),
@@ -58,9 +60,10 @@ def validate_build(directory, arch, revision):
     build = read_json(directory / "BUILD.json")
     smoke = read_json(directory / "SMOKE.json")
     regression = read_json(directory / "TRANSFER-TESTS.json")
+    removal = read_json(directory / "DEVICE-REMOVAL-TESTS.json")
     if build["architecture"] != arch or build["sourceCommit"] != revision:
         raise ValueError(f"Build revision/architecture mismatch: {arch}")
-    if build["nativeVersion"] != "1.0.1.22" or build["diagnosticToolHelpVerified"] is not True:
+    if build["nativeVersion"] != RELEASE["nativeVersion"] or build["diagnosticToolHelpVerified"] is not True:
         raise ValueError(f"Native version/diagnostic tool check missing: {arch}")
     if (build["libraw"]["commit"] != DEPENDENCIES["LibRaw"][1]
             or build["libjpegTurbo"]["commit"] != DEPENDENCIES["libjpeg-turbo"][1]
@@ -73,6 +76,9 @@ def validate_build(directory, arch, revision):
     if (regression["checks"] != 7 or regression["baselineRejected"] is not True
             or regression["currentPassed"] is not True):
         raise ValueError(f"Incomplete regression check: {arch}")
+    if (removal["checks"] < 100 or removal["terminalFaultScenarios"] != 48
+            or removal["productionObjectsLinked"] is not True or removal["physicalCamera"] is not False):
+        raise ValueError(f"Incomplete device-removal regression check: {arch}")
     tool = "SonyCameraInfo64.exe" if arch == "x64" else "SonyCameraInfo.exe"
     names = ["SonyMTPCamera.dll", "libraw.dll", "turbojpeg.dll", tool]
     for name in names:
@@ -125,17 +131,28 @@ def main():
 
     deps = {name: dependency_source(*pin) for name, pin in DEPENDENCIES.items()}
     source_name = f"SonyCamera-native-{VERSION}-source.zip"
-    source_url = f"https://github.com/shurkanTwo/SonyCamera/releases/download/{VERSION}/{source_name}"
+    if RELEASE.get("artifactOnly", False):
+        run_id = os.environ.get("GITHUB_RUN_ID")
+        source_url = (f"https://github.com/shurkanTwo/SonyCamera/actions/runs/{run_id}"
+                      if run_id else RELEASE["reviewUrl"])
+        source_location = (
+            "Download native-release-packages from the linked Actions run or PR checks.\n"
+            "Extract the artifact;\n"
+            "it contains this binary ZIP and the complete matching source ZIP.\n"
+        )
+    else:
+        source_url = f"https://github.com/shurkanTwo/SonyCamera/releases/download/{VERSION}/{source_name}"
+        source_location = "Download the source ZIP alongside this binary ZIP from the same release.\n"
     source_notice = (
         f"SonyCamera native {VERSION}\nSource commit: {revision}\n"
         f"Complete corresponding source: {source_name}\n{source_url}\n"
-        "Download the source ZIP alongside this binary ZIP from the same release.\n"
+        f"{source_location}"
         "It includes the native project, complete LibRaw/libjpeg-turbo source, licenses,\n"
         "build scripts, pinned dependency revisions and regression baseline.\n"
         "See build/README.md in the source ZIP for build prerequisites/instructions.\n"
     ).encode()
     common = {name: (ROOT / name).read_bytes() for name in
-              ("LICENSE", "NOTICE.md", "INSTALLATION.md", "RELEASE-NOTES.md")}
+              ("LICENSE", "NOTICE.md", "INSTALLATION.md", "RELEASE-NOTES.md", "HARDWARE-TESTING.md")}
     common["SOURCE.txt"] = source_notice
     for name, files in deps.items():
         common.update(licenses(name, files))
@@ -144,7 +161,7 @@ def main():
     outputs = []
     for arch, (directory, names) in validated.items():
         files = dict(common)
-        for name in names + ["BUILD.json", "SMOKE.json", "TRANSFER-TESTS.json"]:
+        for name in names + ["BUILD.json", "SMOKE.json", "TRANSFER-TESTS.json", "DEVICE-REMOVAL-TESTS.json"]:
             files[name] = (directory / name).read_bytes()
         path = args.output / f"SonyCamera-native-{VERSION}-win-{arch}.zip"
         write_zip(path, files)

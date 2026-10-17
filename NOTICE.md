@@ -1,6 +1,6 @@
 # Attribution and third-party software
 
-SonyCamera originates at https://github.com/dougforpres/SonyCamera by @dougforpres and its contributors. This community fork is maintained by @shurkanTwo. The transfer-buffer fix is @totoantibes's original upstream PR #17 commit, preserved in history. SonyCamera remains under its original GPLv3 license; see LICENSE.
+SonyCamera originates at https://github.com/dougforpres/SonyCamera by @dougforpres and its contributors. This community fork is maintained by @shurkanTwo. The transfer-buffer fix and experimental device-removal changes preserve @totoantibes's original upstream PR #17 and #16 commits. Follow-up fixes and tests are by @shurkanTwo. SonyCamera remains under its original GPLv3 license; see LICENSE.
 
 Release packages dynamically link these libraries:
 

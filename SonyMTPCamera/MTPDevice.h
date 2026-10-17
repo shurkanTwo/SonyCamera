@@ -3,6 +3,7 @@
 #include "Device.h"
 #include <PortableDeviceApi.h>
 #include "DeviceEventHandler.h"
+#include <mutex>
 
 class MTPDevice : public Device
 {
@@ -29,6 +30,8 @@ public:
 
 protected:
     virtual Message* InternalSend(Op kind, Message* out);
+    virtual void OnGone();
+    virtual HRESULT CreatePortableDevice(IPortableDevice** device);
 
 private:
     void InitManufacturer();
@@ -36,9 +39,11 @@ private:
     void InitFriendlyName();
     void CreateClientInformation();
     bool IsSuccess(HRESULT hr, const wchar_t* message);
+    static bool IsDeviceGoneResult(HRESULT hr);
 
     IPortableDevice* m_device = nullptr;
     IPortableDeviceManager* m_manager = nullptr;
     IPortableDeviceValues* m_clientInformation = nullptr;
     DeviceEventHandler* m_eventHandler = nullptr;
+    std::mutex m_notificationMutex;
 };

@@ -94,11 +94,11 @@ CameraTask::Start(Camera* camera)
 }
 
 bool
-CameraTask::QueueAndForget(Camera* camera)
+CameraTask::QueueAndForget(Camera* camera, DWORD timeout)
 {
     CameraWorker* pWorker = camera->GetWorker();
 
-    return pWorker->QueueTask(this, INVALID_HANDLE_VALUE);
+    return pWorker->QueueTask(this, INVALID_HANDLE_VALUE, timeout);
 }
 
 DWORD
@@ -660,8 +660,8 @@ DownloadAndProcessImageTask::DownloadAndProcessImageTask(TakePhotoTaskParams* pa
         },
         {
             3,
-            L"refreshSettings",
-            refreshSettings,
+            L"failCapture",
+            failCapture,
             0,
             0,
             0,

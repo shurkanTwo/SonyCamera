@@ -42,8 +42,8 @@ protected:
     DWORD GetDWORD(BYTE* data, DWORD offset) const;
     PropertyValue* ReadData(BYTE* data, DWORD &offset, DataType type);
 
-    PropertyInfo* m_info;
-    PropertyValue* m_current;
+    PropertyInfo* m_info = nullptr;
+    PropertyValue* m_current = nullptr;
 };
 
 typedef std::unique_ptr<CameraProperty> CameraPropertyPointer;

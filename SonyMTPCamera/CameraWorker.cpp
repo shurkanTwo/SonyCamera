@@ -126,6 +126,23 @@ DWORD CameraWorker::Run()
             isIdleTask = false;
             idleCount = 0;
         }
+        else if (camera->LooksDisconnected())
+        {
+            // The camera has stopped answering, so do not keep asking.  This
+            // idle refresh only exists to spot a photo taken with the camera's
+            // own shutter button, and it is not worth polling a device that is
+            // no longer there twenty times a second - doing so eventually
+            // faults inside the WPD stack and takes the hosting application
+            // with it.  Anything genuinely queued still runs, and a queued
+            // task that succeeds clears this state.
+#ifdef DEBUG
+            LOGTRACE(L"Nothing to do, and the camera is not answering - not queuing an idle refresh");
+#endif
+            isIdleTask = false;
+            idleCount = 0;
+
+            Sleep(500);
+        }
         else
         {
 #ifdef DEBUG
@@ -197,14 +214,14 @@ DWORD CameraWorker::Run()
 }
 
 bool
-CameraWorker::QueueTask(CameraTask* task, HANDLE waiter)
+CameraWorker::QueueTask(CameraTask* task, HANDLE waiter, DWORD timeout)
 {
     // Wait for runner thread to be idle
-    DWORD waitResult = WaitForSingleObject(mutexHandle, INFINITE);
+    DWORD waitResult = WaitForSingleObject(mutexHandle, timeout);
 
     if (waitResult != WAIT_OBJECT_0)
     {
-        // Need to error here
+        return false;
     }
 
     // If there is a waiter, just queue it up - if there is no waiter, look thru

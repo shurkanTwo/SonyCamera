@@ -6,96 +6,51 @@
 #include "Logger.h"
 #include <wtypes.h>
 #include <objbase.h>
+#include <propvarutil.h>
 #include "ResourceLoader.h"
 
 #define DUMP_EVENT_PARAMS
 
-std::wstring g_strEventRegistrationCookie;
-
 DeviceEventHandler::DeviceEventHandler(IPortableDevice* device, Camera* camera)
-    : m_device(device),
-      m_camera(camera)
+    : m_device(device), m_camera(camera)
 {
-    LOGINFO(L"DeviceEventHandler::DeviceEventHandler with x%p", (void*)device);
-    HRESULT                        hr = S_OK;
-    LPWSTR                         wszEventCookie = NULL;
-
-    if (device == NULL)
-    {
-        return;
-    }
-
-    // Check to see if we already have an event registration cookie.  If so,
-    // then avoid registering again.
-    // NOTE: An application can register for events as many times as they want.
-    //       This sample only keeps a single registration cookie around for
-    //       simplicity.
-    if (!g_strEventRegistrationCookie.empty())
-    {
-        LOGERROR(L"This application has already registered to receive device events.");
-
-        return;
-    }
-
-    // Call Advise to register the callback and receive events.
-    if (hr == S_OK)
-    {
-        hr = device->Advise(0, this, NULL, &wszEventCookie);
-
-        if (FAILED(hr))
-        {
-            LOGERROR(L"! Failed to register for device events, hr = 0x%lx", hr);
-        }
-    }
-
-    // Save the event registration cookie if event registration was successful.
-    if (hr == S_OK)
-    {
-        g_strEventRegistrationCookie = wszEventCookie;
-    }
-
-    // Free the event registration cookie, if one was returned.
-    if (wszEventCookie != NULL)
-    {
-        CoTaskMemFree(wszEventCookie);
-        wszEventCookie = NULL;
-    }
-
-    if (hr == S_OK)
-    {
-        LOGINFO(L"This application has registered for device event notifications and was returned the registration cookie '%ws'", g_strEventRegistrationCookie.c_str());
-    }
-
-    // If a failure occurs, remember to delete the allocated callback object, if one exists.
-    //if (pCallback != NULL)
-    //{
-    //    this->Release();
-    //}
+    if (!device) return;
+    device->AddRef(); // Own the interface until Stop, including concurrent Close.
+    LPWSTR cookie = nullptr;
+    HRESULT hr = device->Advise(0, this, nullptr, &cookie);
+    if (SUCCEEDED(hr) && cookie) m_cookie = cookie;
+    else LOGERROR(L"Unable to register device notifications: %08x", hr);
+    CoTaskMemFree(cookie);
 }
 
 DeviceEventHandler::~DeviceEventHandler()
 {
-    LOGINFO(L"DeviceEventHandler::~DeviceEventHandler()");
-    HRESULT hr = S_OK;
+    // Registration is stopped explicitly before the owner's reference is released.
+    // A failed Unadvise may leave WPD holding us; Release controls final destruction.
+    if (m_device) m_device->Release();
+}
 
-    if (m_device == NULL)
+bool DeviceEventHandler::IsRegistered() const
+{
+    return !m_cookie.empty();
+}
+
+HRESULT DeviceEventHandler::Stop()
+{
+    IPortableDevice* device = nullptr;
     {
-        return;
+        std::lock_guard<std::mutex> lock(m_callbackMutex);
+        m_camera = nullptr; // No callback may access Camera after this lock is released.
+        device = m_device;
+        m_device = nullptr;
+        // Transfer the handler's owned interface reference to this local.
     }
-
-    hr = m_device->Unadvise(g_strEventRegistrationCookie.c_str());
-
-    if (FAILED(hr))
-    {
-        LOGERROR(L"! Failed to unregister for device events using registration cookie '%ws', hr = 0x%lx", g_strEventRegistrationCookie.c_str(), hr);
-    }
-
-    if (hr == S_OK)
-    {
-        LOGINFO(L"This application used the registration cookie '%ws' to unregister from receiving device event notifications", g_strEventRegistrationCookie.c_str());
-    }
-
-    g_strEventRegistrationCookie = L"";
+    if (!device) return S_OK;
+    // Outside the callback lock: Unadvise can itself deliver/release a callback.
+    HRESULT hr = m_cookie.empty() ? S_OK : device->Unadvise(m_cookie.c_str());
+    if (FAILED(hr)) LOGWARN(L"Unable to unregister device notifications: %08x", hr);
+    device->Release();
+    return hr;
 }
 
 HRESULT __stdcall 
@@ -108,6 +63,8 @@ DeviceEventHandler::QueryInterface(REFIID  riid, LPVOID* ppvObj)
         hr = E_INVALIDARG;
         return hr;
     }
+
+    *ppvObj = nullptr;
 
     if ((riid == IID_IUnknown) ||
         (riid == IID_IPortableDeviceEventCallback))
@@ -123,54 +80,41 @@ DeviceEventHandler::QueryInterface(REFIID  riid, LPVOID* ppvObj)
     return hr;
 }
 
-ULONG __stdcall 
+ULONG __stdcall
 DeviceEventHandler::AddRef()
 {
-//    LOGTRACE(L"DeviceEventHandler::AddRef()");
-
-    InterlockedIncrement((long*)&m_cRef);
-
-//    LOGTRACE(L"DeviceEventHandler::AddRef() - ref count now %d", m_cRef);
-
-    return m_cRef;
+    return InterlockedIncrement(&m_cRef);
 }
 
-ULONG __stdcall 
+ULONG __stdcall
 DeviceEventHandler::Release()
 {
-//    LOGTRACE(L"DeviceEventHandler::Release()");
-    ULONG ulRefCount = m_cRef - 1;
-
-    if (InterlockedDecrement((long*)&m_cRef) == 0)
-    {
-//        delete this;
-        LOGINFO(L"DeviceEventHandler::Release() - refcount is 0");
-
-        return 0;
-    }
-
-//    LOGTRACE(L"DeviceEventHandler::Release() - refcount is now %d", m_cRef);
-
-    return ulRefCount;
+    ULONG remaining = InterlockedDecrement(&m_cRef);
+    if (remaining == 0) delete this;
+    return remaining;
 }
 
 HRESULT __stdcall 
 DeviceEventHandler::OnEvent(IPortableDeviceValues* pEventParameters)
 {
+    std::lock_guard<std::mutex> lock(m_callbackMutex);
+    if (!m_camera) return S_OK;
+
     LOGTRACE(L"DeviceEventHandler::OnEvent() - in");
     HRESULT hr = S_OK;
 
     if (pEventParameters != NULL)
     {
         LPWSTR pStrValue = nullptr;
-        GUID guid;
+        GUID guid = {};
         RPC_WSTR guidString;
 
         pEventParameters->GetStringValue(WPD_EVENT_PARAMETER_PNP_DEVICE_ID, &pStrValue);
-        LOGTRACE(L"New event from PNP Device ID: %s", pStrValue);
+        LOGTRACE(L"New event from PNP Device ID: %s", pStrValue ? pStrValue : L"<not supplied>");
+        CoTaskMemFree(pStrValue);
 
         // May be pointless, as the event-type always seems to be 0x0000 in USB packet
-        pEventParameters->GetGuidValue(WPD_EVENT_PARAMETER_EVENT_ID, &guid);
+        if (FAILED(pEventParameters->GetGuidValue(WPD_EVENT_PARAMETER_EVENT_ID, &guid))) return S_OK;
 
         if (IsEqualGUID(guid, WPD_EVENT_NOTIFICATION))
         {
@@ -226,12 +170,12 @@ DeviceEventHandler::OnEvent(IPortableDeviceValues* pEventParameters)
                 {
                 case 0xc201:
                     LOGTRACE(L"0xc201 - photo(s) available");
-                    m_camera->OnImageBufferStatus(ImageBufferStatus::ImageReady);
+                    m_camera->QueueImageBufferStatus(ImageBufferStatus::ImageReady);
                     break;
 
                 case 0xc202:
                     LOGTRACE(L"0xc202 - no more photo(s) available");
-                    m_camera->OnImageBufferStatus(ImageBufferStatus::ImageNotReady);
+                    m_camera->QueueImageBufferStatus(ImageBufferStatus::ImageNotReady);
                     break;
 
                 case 0xc203:
@@ -252,13 +196,12 @@ DeviceEventHandler::OnEvent(IPortableDeviceValues* pEventParameters)
         }
 
 #ifdef DUMP_EVENT_PARAMS
-        IPortableDevicePropVariantCollection* pdpvc;
+        IPortableDevicePropVariantCollection* pdpvc = nullptr;
 
-        hr = pEventParameters->GetIPortableDevicePropVariantCollectionValue(WPD_PROPERTY_MTP_EXT_EVENT_PARAMS, &pdpvc);
+        HRESULT optionalResult = pEventParameters->GetIPortableDevicePropVariantCollectionValue(WPD_PROPERTY_MTP_EXT_EVENT_PARAMS, &pdpvc);
 
-        if (SUCCEEDED(hr))
+        if (SUCCEEDED(optionalResult) && pdpvc)
         {
-            pdpvc->AddRef();
             DWORD count = 0;
             pdpvc->GetCount(&count);
 
@@ -266,8 +209,8 @@ DeviceEventHandler::OnEvent(IPortableDeviceValues* pEventParameters)
             {
                 LOGTRACE(L"--- Property %d", i);
                 PROPVARIANT val;
-
-                pdpvc->GetAt(i, &val);
+                PropVariantInit(&val);
+                if (FAILED(pdpvc->GetAt(i, &val))) continue;
 
                 if (val.vt == VT_UI4)
                 {
@@ -277,10 +220,11 @@ DeviceEventHandler::OnEvent(IPortableDeviceValues* pEventParameters)
                 {
                     LOGTRACE(L"    type = %d", val.vt);
                 }
+                PropVariantClear(&val);
             }
         }
 
-        pdpvc->Release();
+        if (pdpvc) pdpvc->Release();
 #endif
     }
 
