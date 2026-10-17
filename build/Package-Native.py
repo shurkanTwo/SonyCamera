@@ -94,6 +94,8 @@ def licenses(name, files):
 
 
 def write_zip(path, files):
+    if len({name.casefold() for name in files}) != len(files):
+        raise ValueError(f"Case-insensitive filename collision in {path}")
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in sorted(files.items()):
             # Stable ZIP metadata; compiler output itself need not be deterministic.
@@ -131,7 +133,7 @@ def main():
         "See build/README.md in the source ZIP for build prerequisites/instructions.\n"
     ).encode()
     common = {name: (ROOT / name).read_bytes() for name in
-              ("LICENSE", "NOTICE.md", "INSTALLATION.md", "CHANGELOG.md")}
+              ("LICENSE", "NOTICE.md", "INSTALLATION.md", "RELEASE-NOTES.md")}
     common["SOURCE.txt"] = source_notice
     for name, files in deps.items():
         common.update(licenses(name, files))

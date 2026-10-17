@@ -3,12 +3,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $baselineRevision = '21f469f6d2e9516ec4896eaa0ec9c45c4e96d92d'
 $template = @'
-#include <algorithm>
-#include <cstdint>
 #include <iostream>
-using ULONG = std::uint32_t;
-using std::min;
-using std::max;
+#include <windows.h>
+// Use the same Windows ULONG and min/max macros as MTPDevice.cpp.
 ULONG ProductionBufferSize(ULONG cbReportedDataSize, ULONG cbOptimalDataSize, bool maximumMemoryMode) {
 __PRODUCTION_EXPRESSION__
 return bufferSize;
