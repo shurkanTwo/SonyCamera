@@ -54,8 +54,13 @@ function Test-Expression {
         throw "Unexpected result from $Label production calculation: $result"
     }
 }
-$before = (& git -C $root show "${baselineRevision}:SonyMTPCamera/MTPDevice.cpp") -join "`n"
-if ($LASTEXITCODE -ne 0) { throw 'Baseline source could not be read.' }
+$bundledBaseline = Join-Path $root 'tests/baseline-MTPDevice.cpp'
+if (Test-Path $bundledBaseline) {
+    $before = Get-Content $bundledBaseline -Raw
+} else {
+    $before = (& git -C $root show "${baselineRevision}:SonyMTPCamera/MTPDevice.cpp") -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw 'Baseline source could not be read. Clone with full history or use the release source ZIP.' }
+}
 Test-Expression 'baseline' $before $true
 $current = Get-Content (Join-Path $root 'SonyMTPCamera/MTPDevice.cpp') -Raw
 Test-Expression 'current' $current $false

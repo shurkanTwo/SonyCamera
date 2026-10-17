@@ -43,6 +43,20 @@ New-Item -ItemType Directory -Force -Path $depRoot, $output | Out-Null
 function Get-PinnedSource {
     param([string]$Name, [string]$Repository, [string]$Commit)
     $path = Join-Path $depRoot $Name
+    $bundled = Join-Path $root "third-party/$Name"
+    if (Test-Path "$bundled/SOURCE_REVISION") {
+        if ((Get-Content "$bundled/SOURCE_REVISION" -Raw).Trim() -ne $Commit) {
+            throw "Unexpected bundled source revision for $Name."
+        }
+        if (!(Test-Path "$path/SOURCE_REVISION")) {
+            if (Test-Path $path) { Remove-Item $path -Recurse -Force }
+            Copy-Item $bundled $path -Recurse
+        }
+        if ((Get-Content "$path/SOURCE_REVISION" -Raw).Trim() -ne $Commit) {
+            throw "Unexpected copied source revision for $Name."
+        }
+        return $path
+    }
     if (!(Test-Path "$path/.git")) {
         Invoke-Checked git @('init', '--quiet', $path)
         Invoke-Checked git @('-C', $path, 'remote', 'add', 'origin', "https://github.com/$Repository.git")
@@ -84,9 +98,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Native DLL smoke check failed.' }
 $smokeResult | Set-Content "$output/SMOKE.json" -Encoding utf8
 Write-Host $smokeResult
 & (Join-Path $root 'tests/Test-TransferBuffer.ps1') -OutputDirectory $output
+$sourceCommit = if (Test-Path "$root/SOURCE_REVISION") {
+    (Get-Content "$root/SOURCE_REVISION" -Raw).Trim()
+} else {
+    & git -C $root rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Source revision could not be read.' }
+}
 @{
     architecture = $Architecture
-    sourceCommit = (& git -C $root rev-parse HEAD)
+    sourceCommit = $sourceCommit
     libraw = @{ version = '0.21.0'; commit = $librawCommit }
     libjpegTurbo = @{ version = '2.0.3'; commit = $jpegCommit; simd = $true }
     visualStudio = $vs
