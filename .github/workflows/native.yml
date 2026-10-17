@@ -1,7 +1,7 @@
 name: Build and verify native Sony driver
 on:
   push:
-    branches: [workerThread, 'maintenance/**']
+    branches: [workerThread]
   pull_request:
     branches: [workerThread]
   workflow_dispatch:
@@ -17,9 +17,28 @@ jobs:
         architecture: [x86, x64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build pinned dependencies and unchanged native driver
+        with:
+          fetch-depth: 0
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: dependencies
+        with:
+          path: |
+            .build/dependencies/${{ matrix.architecture }}
+            .build/tools
+          key: native-windows2022-${{ matrix.architecture }}-libraw0210-jpeg203-nasm21603-v1
+      - name: Build pinned native dependencies
         shell: pwsh
-        run: ./build/Build-Native.ps1 -Architecture '${{ matrix.architecture }}'
+        run: ./build/Build-Native.ps1 -Architecture '${{ matrix.architecture }}' -DependenciesOnly
+      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        with:
+          path: |
+            .build/dependencies/${{ matrix.architecture }}
+            .build/tools
+          key: native-windows2022-${{ matrix.architecture }}-libraw0210-jpeg203-nasm21603-v1
+      - name: Build native driver and verify exports/buffer sizing
+        shell: pwsh
+        run: ./build/Build-Native.ps1 -Architecture '${{ matrix.architecture }}' -SkipDependencies
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -28,5 +47,5 @@ jobs:
           path: |
             .build/output/${{ matrix.architecture }}/*.dll
             .build/output/${{ matrix.architecture }}/*.exe
-            .build/output/${{ matrix.architecture }}/BUILD.json
+            .build/output/${{ matrix.architecture }}/*.json
           if-no-files-found: warn
