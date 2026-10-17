@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import struct
 import subprocess
@@ -130,11 +131,22 @@ def main():
 
     deps = {name: dependency_source(*pin) for name, pin in DEPENDENCIES.items()}
     source_name = f"SonyCamera-native-{VERSION}-source.zip"
-    source_url = f"https://github.com/shurkanTwo/SonyCamera/releases/download/{VERSION}/{source_name}"
+    if RELEASE.get("artifactOnly", False):
+        run_id = os.environ.get("GITHUB_RUN_ID")
+        source_url = (f"https://github.com/shurkanTwo/SonyCamera/actions/runs/{run_id}"
+                      if run_id else RELEASE["reviewUrl"])
+        source_location = (
+            "Download native-release-packages from the linked Actions run or PR checks.\n"
+            "Extract the artifact;\n"
+            "it contains this binary ZIP and the complete matching source ZIP.\n"
+        )
+    else:
+        source_url = f"https://github.com/shurkanTwo/SonyCamera/releases/download/{VERSION}/{source_name}"
+        source_location = "Download the source ZIP alongside this binary ZIP from the same release.\n"
     source_notice = (
         f"SonyCamera native {VERSION}\nSource commit: {revision}\n"
         f"Complete corresponding source: {source_name}\n{source_url}\n"
-        "Download the source ZIP alongside this binary ZIP from the same release.\n"
+        f"{source_location}"
         "It includes the native project, complete LibRaw/libjpeg-turbo source, licenses,\n"
         "build scripts, pinned dependency revisions and regression baseline.\n"
         "See build/README.md in the source ZIP for build prerequisites/instructions.\n"

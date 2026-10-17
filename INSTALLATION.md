@@ -1,12 +1,12 @@
 # Manual installation and rollback
 
-These are experimental native-driver candidate packages, not an ASCOM installer. The regular/Latest native release is 1.0.1.22; this separate candidate is 1.0.1.23-device-removal-test.1 and requires hardware validation. Keep your existing working ASCOM/NINA installation and its settings. Camera captures, USB disconnections and ASCOM/NINA integration have not yet been tested on hardware with this prerelease.
+These are experimental native-driver candidate packages, not an ASCOM installer. The regular/Latest native release is 1.0.1.22; this separate candidate is 1.0.1.23-device-removal-test.1 and requires hardware validation. Keep your existing working ASCOM/NINA installation and its settings. Camera captures, USB disconnections and ASCOM/NINA integration have not yet been tested on hardware with this candidate.
 
 ## Choose and verify a download
 
-1. Download the native-release-packages artifact from the candidate draft PR's successful Actions run; see [HARDWARE-TESTING.md](HARDWARE-TESTING.md). This candidate is separate from the published preview.
-2. Download `SonyCamera-native-1.0.1.23-device-removal-test.1-win-x64.zip` for a 64-bit client, or `...-win-x86.zip` for a 32-bit client. Match the application process, even on 64-bit Windows. Never mix DLLs from the two packages.
-3. Download SHA256SUMS.txt from the same release. In PowerShell, run `Get-FileHash .\SonyCamera-native-1.0.1.23-device-removal-test.1-win-x64.zip -Algorithm SHA256` (substitute x86 as needed) and compare the complete value with SHA256SUMS.txt. Unblock the downloaded ZIP through Windows Properties, then extract it to a new folder.
+1. Download and extract the native-release-packages artifact from the candidate draft PR's successful Actions run; see [HARDWARE-TESTING.md](HARDWARE-TESTING.md). GitHub requires signing in to download Actions artifacts. This candidate is separate from the published regular release.
+2. Inside the artifact, choose `SonyCamera-native-1.0.1.23-device-removal-test.1-win-x64.zip` for a 64-bit client, or `...-win-x86.zip` for a 32-bit client. Match the application process, even on 64-bit Windows. Never mix DLLs from the two packages.
+3. Use SHA256SUMS.txt from the same artifact. In PowerShell, run `Get-FileHash .\SonyCamera-native-1.0.1.23-device-removal-test.1-win-x64.zip -Algorithm SHA256` (substitute x86 as needed) and compare the complete value with SHA256SUMS.txt. Unblock the downloaded ZIP through Windows Properties, then extract it to a new folder.
 
 Each binary ZIP contains SonyMTPCamera.dll, libraw.dll, turbojpeg.dll, the diagnostic tool, build/check evidence and license notices. The source ZIP is for rebuilding; it is not the binary installation package. The binaries are unsigned. If Windows reports missing Visual C++ runtime DLLs, install Microsoft's supported [Visual C++ v14 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) matching the process architecture.
 
@@ -40,4 +40,4 @@ Close every camera client again. Restore the three backed-up files to their reco
 
 ## Report results
 
-Use [this fork's issues](https://github.com/shurkanTwo/SonyCamera/issues). Include camera model/firmware, Windows and client versions, process architecture, native DLL path/version, dependency paths, the release tag, test steps and relevant logs. Remove personal information from logs. This candidate includes upstream PR #16 and follow-up fixes, but physical removal safety is unverified. Keep it separate from your working installation until the hardware acceptance checks pass.
+Use [this fork's issues](https://github.com/shurkanTwo/SonyCamera/issues). Include camera model/firmware, Windows and client versions, process architecture, native DLL path/version, dependency paths, the Actions run URL and BUILD.json sourceCommit, test steps and relevant logs. Remove personal information from logs. This candidate includes upstream PR #16 and follow-up fixes, but physical removal safety is unverified. Keep it separate from your working installation until the hardware acceptance checks pass.

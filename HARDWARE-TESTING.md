@@ -14,7 +14,7 @@ See [the review record](docs/REVIEW-PR16.md) for findings, corrections and limit
 
 ## Obtain and identify the candidate
 
-Use the native-release-packages artifact from the linked draft PR's latest successful Actions run. Its ZIP names contain 1.0.1.23-device-removal-test.1; the DLL/tool version must be 1.0.1.23. Verify SHA256SUMS.txt, architecture, BUILD.json sourceCommit and the run/PR commit before testing. Do not substitute packages from the older published release. Each package includes complete source and notices through the companion source ZIP.
+Use the native-release-packages artifact from the linked draft PR's latest successful Actions run. Its ZIP names contain 1.0.1.23-device-removal-test.1; the DLL/tool version must be 1.0.1.23. Verify SHA256SUMS.txt, architecture and BUILD.json sourceCommit before testing. Pull-request workflows compile GitHub's temporary merge commit; match that sourceCommit with SOURCE_REVISION in the source ZIP and the run's checkout log, rather than expecting the PR branch's head SHA. Do not substitute packages from the older published release. Each package includes complete source and notices through the companion source ZIP. SOURCE.txt links to the Actions run that delivered all three ZIPs together.
 
 Follow [INSTALLATION.md](INSTALLATION.md) for loaded module paths, backups, installation and rollback. Start in a dedicated test session with saved work and no important sequence running. Turn on relevant client/native logging before reproducing a disconnection. Keep original files and the existing installer available.
 
