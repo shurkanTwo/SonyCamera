@@ -1,0 +1,18 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(SonyOutputRoot)' != ''">
+    <OutDir>$(SonyOutputRoot)\</OutDir>
+    <IntDir>$(SonyOutputRoot)\obj\$(MSBuildProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\SonyMTPCamera;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(MSBuildProjectName)' == 'SonyMTPCamera' and '$(SonyDependencyRoot)' != ''">
+    <Link>
+      <AdditionalLibraryDirectories>$(SonyDependencyRoot)\LibRaw\lib;$(SonyDependencyRoot)\jpeg-build\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;cfgmgr32.lib;PortableDeviceGUIDs.lib;rpcrt4.lib;Version.lib;libraw.lib;turbojpeg.lib;</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

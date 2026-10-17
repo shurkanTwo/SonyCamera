@@ -341,3 +341,6 @@ healthchecksdb
 /TestLibRaw
 /RawSpeed
 *.dll
+
+# Maintained native build dependencies and output
+.build/
