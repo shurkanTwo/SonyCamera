@@ -1,6 +1,6 @@
 # SonyCamera
 
-**Experimental device-removal branch:** candidate 1.0.1.23-device-removal-test.1 is separate from the published preview. See [hardware testing and acceptance](HARDWARE-TESTING.md).
+**Experimental device-removal branch:** candidate 1.0.1.23-device-removal-test.1 is separate from the published regular release. See [hardware testing and acceptance](HARDWARE-TESTING.md).
 
 ## Community maintenance
 
