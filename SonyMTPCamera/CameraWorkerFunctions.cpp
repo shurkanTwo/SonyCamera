@@ -190,7 +190,10 @@ downloadImage(CameraTaskInfo& info)
             // failed response, and reads past the end of an empty buffer.
             LOGWARN(L"No image returned for image #%d - stopping the download loop", imageCount + 1);
 
-            break;
+            delete static_cast<Image*>(info.pTask->GetResult());
+            info.pTask->SetResult(nullptr);
+            info.pCamera->SetCaptureStatus(CaptureStatus::Failed);
+            return StateResult::Fail;
         }
     }
 

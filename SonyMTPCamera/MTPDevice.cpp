@@ -190,6 +190,7 @@ MTPDevice::Close()
 bool
 MTPDevice::StartNotifications(Camera* camera)
 {
+    std::lock_guard<std::mutex> lock(m_notificationMutex);
     if (IsGone() || !m_device) return false;
 
     if (!m_eventHandler)
@@ -211,10 +212,14 @@ MTPDevice::StartNotifications(Camera* camera)
 bool
 MTPDevice::StopNotifications()
 {
-    if (m_eventHandler)
+    DeviceEventHandler* handler = nullptr;
     {
-        DeviceEventHandler* handler = m_eventHandler;
+        std::lock_guard<std::mutex> lock(m_notificationMutex);
+        handler = m_eventHandler;
         m_eventHandler = nullptr;
+    }
+    if (handler)
+    {
         HRESULT hr = handler->Stop();
         handler->Release(); // WPD/in-flight callbacks retain their own references.
         return SUCCEEDED(hr);
@@ -584,6 +589,21 @@ MTPDevice::InternalSend(Device::Op kind, Message* out)
     {
         hr = hrCmd;
         IsSuccess(hr, L"Send Command actual send result");
+    }
+
+    // No-data operations return their response immediately; no transfer context
+    // or END_DATA_TRANSFER is part of that WPD command's contract.
+    if (kind == Op::CommandOnly)
+    {
+        DWORD response = 0;
+        if (IsSuccess(hr, L"No-data command result") && spResults)
+        {
+            hr = spResults->GetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_RESPONSE_CODE, &response);
+            if (IsSuccess(hr, L"No-data response code")) result->SetCommand(static_cast<WORD>(response));
+        }
+        if (spResults) spResults->Release();
+        if (pDevValues) pDevValues->Release();
+        return result;
     }
 
     // If the transfer was initiated successfully, the driver returns a context cookie

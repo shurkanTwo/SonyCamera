@@ -6,6 +6,7 @@
 #include "Logger.h"
 #include <wtypes.h>
 #include <objbase.h>
+#include <propvarutil.h>
 #include "ResourceLoader.h"
 
 #define DUMP_EVENT_PARAMS
@@ -14,6 +15,7 @@ DeviceEventHandler::DeviceEventHandler(IPortableDevice* device, Camera* camera)
     : m_device(device), m_camera(camera)
 {
     if (!device) return;
+    device->AddRef(); // Own the interface until Stop, including concurrent Close.
     LPWSTR cookie = nullptr;
     HRESULT hr = device->Advise(0, this, nullptr, &cookie);
     if (SUCCEEDED(hr) && cookie) m_cookie = cookie;
@@ -25,6 +27,7 @@ DeviceEventHandler::~DeviceEventHandler()
 {
     // Registration is stopped explicitly before the owner's reference is released.
     // A failed Unadvise may leave WPD holding us; Release controls final destruction.
+    if (m_device) m_device->Release();
 }
 
 bool DeviceEventHandler::IsRegistered() const
@@ -40,7 +43,7 @@ HRESULT DeviceEventHandler::Stop()
         m_camera = nullptr; // No callback may access Camera after this lock is released.
         device = m_device;
         m_device = nullptr;
-        if (device) device->AddRef();
+        // Transfer the handler's owned interface reference to this local.
     }
     if (!device) return S_OK;
     // Outside the callback lock: Unadvise can itself deliver/release a callback.

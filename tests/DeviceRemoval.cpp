@@ -7,6 +7,7 @@
 #include <PortableDevice.h>
 #include <WpdMtpExtensions.h>
 #include <atomic>
+#include <thread>
 #include <stdexcept>
 #include <vector>
 
@@ -103,13 +104,26 @@ namespace
                 IID_IPortableDeviceValues, reinterpret_cast<void**>(result));
             if (FAILED(hr)) return hr;
             (*result)->SetErrorValue(WPD_PROPERTY_COMMON_HRESULT, phase == failAt ? failure : S_OK);
-            (*result)->SetStringValue(WPD_PROPERTY_MTP_EXT_TRANSFER_CONTEXT, L"test-transfer");
-            (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_OPTIMAL_TRANSFER_BUFFER_SIZE, 1);
-            (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_TRANSFER_TOTAL_DATA_SIZE, 12);
-            (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_RESPONSE_CODE, COMMAND_RESULT_SUCCESS);
-            (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_TRANSFER_NUM_BYTES_WRITTEN, 12);
-            BYTE data[12] = {};
-            (*result)->SetBufferValue(WPD_PROPERTY_MTP_EXT_TRANSFER_DATA, data, sizeof(data));
+            if (phase == failAt) return S_OK;
+            if (id == WPD_COMMAND_MTP_EXT_EXECUTE_COMMAND_WITHOUT_DATA_PHASE.pid || phase == Phase::End)
+            {
+                (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_RESPONSE_CODE, COMMAND_RESULT_SUCCESS);
+            }
+            else if (phase == Phase::Execute)
+            {
+                (*result)->SetStringValue(WPD_PROPERTY_MTP_EXT_TRANSFER_CONTEXT, L"test-transfer");
+                (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_OPTIMAL_TRANSFER_BUFFER_SIZE, 1);
+                (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_TRANSFER_TOTAL_DATA_SIZE, 12);
+            }
+            else if (phase == Phase::Write)
+            {
+                (*result)->SetUnsignedIntegerValue(WPD_PROPERTY_MTP_EXT_TRANSFER_NUM_BYTES_WRITTEN, 12);
+            }
+            else if (phase == Phase::Read)
+            {
+                BYTE data[12] = {};
+                (*result)->SetBufferValue(WPD_PROPERTY_MTP_EXT_TRANSFER_DATA, data, sizeof(data));
+            }
             return S_OK;
         }
     };
@@ -132,7 +146,16 @@ namespace
     class TestCamera : public Camera
     {
     public:
-        explicit TestCamera(Device* device) : Camera(device) {}
+        explicit TestCamera(Device* device) : Camera(device)
+        {
+            m_settings = new CameraSettings();
+            auto* property = new CameraProperty();
+            property->SetId(Property::PhotoBufferStatus);
+            property->SetCurrentValue(new PropertyValue(static_cast<UINT16>(0)));
+            m_settings->AddProperty(property);
+        }
+        ~TestCamera() { delete firstImage; }
+        Image* firstImage = nullptr;
         bool refreshResult = true;
         bool throwRefresh = false;
         bool Initialize() override { return true; }
@@ -146,7 +169,16 @@ namespace
         UINT16 SetFocus(UINT16) override { return 0; }
         UINT16 GetFocusLimit() override { return 0; }
         UINT16 GetFocus() override { return 0; }
-        Image* GetImage(DWORD) override { return nullptr; }
+        Image* GetImage(DWORD) override
+        {
+            Image* image = firstImage;
+            firstImage = nullptr;
+            return image;
+        }
+        void SetImageReady()
+        {
+            m_settings->GetProperty(Property::PhotoBufferStatus)->SetCurrentValue(new PropertyValue(static_cast<UINT16>(0x8001)));
+        }
     };
 
     class DownloadTask : public DownloadAndProcessImageTask
@@ -178,7 +210,7 @@ namespace
             }
             else
             {
-                if (phase == Phase::Write) { BYTE data[12] = {}; command.SetData(data, sizeof(data)); }
+                if (phase == Phase::Write || phase == Phase::End) { BYTE data[12] = {}; command.SetData(data, sizeof(data)); }
                 Check(!device.Send(&command), "failed transfer reported successful send");
             }
             Check(device.IsGone(), "terminal WPD failure did not mark device gone");
@@ -208,6 +240,7 @@ namespace
         Check(!device.Send(&command) && !device.IsGone(), "ordinary error declared physical removal");
         endpoint.failAt = Phase::None;
         Check(device.Send(&command), "healthy send did not recover from ordinary error");
+        Check(endpoint.commands.back() == Phase::Execute, "no-data command incorrectly required END/context");
         device.MarkGone();
         Check(device.Open() == INVALID_HANDLE_VALUE && device.IsGone() && device.GetOpenCount() == 1,
             "nested open erased terminal removal without new session");
@@ -234,23 +267,27 @@ namespace
         first.cookie = L"first-cookie"; second.cookie = L"second-cookie";
         Transport a(first), b(second);
         a.Open(); b.Open();
-        TestCamera camera(&a);
-        Check(a.StartNotifications(&camera) && b.StartNotifications(nullptr), "multiple devices share one registration cookie");
+        auto camera = std::make_unique<TestCamera>(&a);
+        Check(a.StartNotifications(camera.get()) && b.StartNotifications(nullptr), "multiple devices share one registration cookie");
         IPortableDeviceValues* event = nullptr;
         Check(SUCCEEDED(CoCreateInstance(CLSID_PortableDeviceValues, nullptr, CLSCTX_INPROC_SERVER,
             IID_IPortableDeviceValues, reinterpret_cast<void**>(&event))), "event values unavailable");
         Check(SUCCEEDED(first.callback->OnEvent(event)), "event without GUID was unsafe");
         event->SetGuidValue(WPD_EVENT_PARAMETER_EVENT_ID, WPD_EVENT_DEVICE_REMOVED);
         first.callback->OnEvent(event); // No optional event-parameter collection.
-        event->Release();
         first.unadviseResult = E_FAIL;
         auto* late = first.callback;
         late->AddRef(); // Simulates an event already owned by WPD when teardown starts.
         a.MarkGone();
         Check(first.callback == late, "failed unregistration lost WPD callback ownership");
-        Check(late->OnEvent(nullptr) == S_OK, "late callback accessed its detached camera");
+        camera.reset();
+        GUID sonyProperty = {};
+        sonyProperty.Data1 = 0xc2030000;
+        event->SetGuidValue(WPD_EVENT_PARAMETER_EVENT_ID, sonyProperty);
+        Check(late->OnEvent(event) == S_OK, "late Sony callback accessed destroyed camera");
         Check(a.Close(), "removed callback owner did not close");
-        Check(late->OnEvent(nullptr) == S_OK, "callback did not survive interface teardown");
+        Check(late->OnEvent(event) == S_OK, "callback did not survive interface teardown");
+        event->Release();
         first.DropCallback();
         Check(late->Release() == 0, "callback lifetime did not end at final COM release");
         b.Close();
@@ -284,6 +321,95 @@ namespace
         Check(task.IsComplete() && !task.Succeeded(), "missing-image task did not finish as failure");
         Check(camera.GetCaptureStatus() == CaptureStatus::Failed && task.GetImage() == nullptr,
             "missing image left capture pending or returned image");
+
+        Message jpeg(COMMAND_RESULT_SUCCESS);
+        BYTE bytes[] = { 0xff, 0xd8, 0xff, 0xe1 };
+        jpeg.SetData(bytes, sizeof(bytes));
+        camera.firstImage = new Image(new ObjectInfo(InputMode::JPEG), &jpeg);
+        camera.SetImageReady(); // Another (RAW) image is still expected after JPEG.
+        DownloadTask partial(&params);
+        CameraTaskInfo partialInfo{ &camera, &partial };
+        steps = 0;
+        while (!partial.IsComplete() && steps++ < 5) partial.Step(partialInfo);
+        Check(partial.IsComplete() && !partial.Succeeded() && partial.GetImage() == nullptr,
+            "partial JPEG/RAW download reported success or retained incomplete image");
+        Check(camera.GetCaptureStatus() == CaptureStatus::Failed, "partial download left capture pending");
+    }
+
+    void ConcurrentShutdown()
+    {
+        for (int i = 0; i < 64; ++i)
+        {
+            PortableDevice endpoint;
+            Transport device(endpoint);
+            device.Open();
+            device.StartNotifications(nullptr);
+            HANDLE start = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+            std::thread removal([&] { WaitForSingleObject(start, 5000); device.MarkGone(); });
+            std::thread shutdown([&] { WaitForSingleObject(start, 5000); device.StopNotifications(); });
+            SetEvent(start);
+            removal.join(); shutdown.join();
+            CloseHandle(start);
+            Check(endpoint.unadvises == 1 && endpoint.callback == nullptr, "concurrent shutdown acquired callback owner twice");
+            device.Close();
+            Check(endpoint.references == 1, "concurrent shutdown leaked interface reference");
+        }
+    }
+
+    void BusyWorkerCallback()
+    {
+        PortableDevice endpoint;
+        Transport device(endpoint);
+        device.Open();
+        TestCamera camera(&device);
+        device.StartNotifications(&camera);
+        HANDLE entered = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        HANDLE resume = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        HANDLE notified = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        class BlockingTask : public CameraTask
+        {
+        public:
+            BlockingTask(HANDLE entered, HANDLE resume) : CameraTask(L"TestBlockingWorker")
+            {
+                SetParam1(entered); SetParam2(resume);
+                StateStepInfo step = {};
+                step.id = 0; step.isTerminal = true;
+                step.handler = [](CameraTaskInfo& info) {
+                    SetEvent(info.pTask->GetParam1());
+                    WaitForSingleObject(info.pTask->GetParam2(), 5000);
+                    return StateResult::Success;
+                };
+                AddStep(step);
+            }
+        };
+        camera.GetWorker()->OnCameraStateChange(CameraState::Connected);
+        auto* task = new BlockingTask(entered, resume);
+        task->QueueAndForget(&camera);
+        Check(WaitForSingleObject(entered, 5000) == WAIT_OBJECT_0, "worker did not enter blocking task");
+        IPortableDeviceValues* event = nullptr;
+        CoCreateInstance(CLSID_PortableDeviceValues, nullptr, CLSCTX_INPROC_SERVER,
+            IID_IPortableDeviceValues, reinterpret_cast<void**>(&event));
+        GUID sonyImage = {}; sonyImage.Data1 = 0xc2010000;
+        event->SetGuidValue(WPD_EVENT_PARAMETER_EVENT_ID, sonyImage);
+        auto* callback = endpoint.callback;
+        callback->AddRef();
+        std::thread notification([&] {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            callback->OnEvent(event);
+            SetEvent(notified);
+            CoUninitialize();
+        });
+        bool returnedWhileWorkerBusy = WaitForSingleObject(notified, 1000) == WAIT_OBJECT_0;
+        // Always release before joining, including on a regression, so the test
+        // fails with evidence rather than deadlocking the CI process.
+        SetEvent(resume);
+        notification.join();
+        callback->Release(); event->Release();
+        camera.GetWorker()->OnCameraStateChange(CameraState::Disconnected);
+        device.StopNotifications();
+        CloseHandle(entered); CloseHandle(resume); CloseHandle(notified);
+        Check(returnedWhileWorkerBusy, "callback blocked on busy worker during teardown");
+        device.Close();
     }
 }
 
@@ -297,6 +423,8 @@ int main()
         ReopenAndNonterminalErrors();
         CallbackOwnership();
         RefreshAndDownload();
+        ConcurrentShutdown();
+        BusyWorkerCallback();
         std::cout << "{\"checks\":" << checks
             << ",\"terminalFaultScenarios\":48,\"productionObjectsLinked\":true,\"physicalCamera\":false}\n";
     }

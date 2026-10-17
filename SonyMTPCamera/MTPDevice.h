@@ -3,6 +3,7 @@
 #include "Device.h"
 #include <PortableDeviceApi.h>
 #include "DeviceEventHandler.h"
+#include <mutex>
 
 class MTPDevice : public Device
 {
@@ -44,4 +45,5 @@ private:
     IPortableDeviceManager* m_manager = nullptr;
     IPortableDeviceValues* m_clientInformation = nullptr;
     DeviceEventHandler* m_eventHandler = nullptr;
+    std::mutex m_notificationMutex;
 };
