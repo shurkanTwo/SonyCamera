@@ -91,6 +91,14 @@ foreach ($project in @('SonyMTPCamera/SonyMTPCamera.vcxproj', 'SonyCameraInfo/So
 }
 Copy-Item "$libraw/bin/libraw.dll" $output
 Copy-Item "$jpegBuild/Release/turbojpeg.dll" $output
+$toolName = if ($Architecture -eq 'x64') { 'SonyCameraInfo64.exe' } else { 'SonyCameraInfo.exe' }
+foreach ($file in @('SonyMTPCamera.dll', $toolName)) {
+    $version = (Get-Item (Join-Path $output $file)).VersionInfo.FileVersion
+    if ($version -ne '1.0.1.22') { throw "Unexpected file version for $file`: $version" }
+}
+$help = & (Join-Path $output $toolName) /h
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic tool help/load check failed.' }
+Write-Host ($help -join "`n")
 $smoke = Join-Path $output 'NativeSmoke.exe'
 Invoke-Checked cl @('/nologo', '/EHsc', '/std:c++20', (Join-Path $root 'tests/NativeSmoke.cpp'), "/Fe$smoke", "/Fo$output/NativeSmoke.obj", '/link', 'kernel32.lib')
 $smokeResult = & $smoke $output
@@ -107,6 +115,8 @@ $sourceCommit = if (Test-Path "$root/SOURCE_REVISION") {
 @{
     architecture = $Architecture
     sourceCommit = $sourceCommit
+    nativeVersion = '1.0.1.22'
+    diagnosticToolHelpVerified = $true
     libraw = @{ version = '0.21.0'; commit = $librawCommit }
     libjpegTurbo = @{ version = '2.0.3'; commit = $jpegCommit; simd = $true }
     visualStudio = $vs

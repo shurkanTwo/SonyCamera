@@ -60,6 +60,8 @@ def validate_build(directory, arch, revision):
     regression = read_json(directory / "TRANSFER-TESTS.json")
     if build["architecture"] != arch or build["sourceCommit"] != revision:
         raise ValueError(f"Build revision/architecture mismatch: {arch}")
+    if build["nativeVersion"] != "1.0.1.22" or build["diagnosticToolHelpVerified"] is not True:
+        raise ValueError(f"Native version/diagnostic tool check missing: {arch}")
     if (build["libraw"]["commit"] != DEPENDENCIES["LibRaw"][1]
             or build["libjpegTurbo"]["commit"] != DEPENDENCIES["libjpeg-turbo"][1]
             or build["libjpegTurbo"]["simd"] is not True):
