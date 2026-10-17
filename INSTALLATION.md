@@ -1,6 +1,6 @@
 # Manual installation and rollback
 
-These are native-driver test packages, not an ASCOM installer. Keep your existing working ASCOM/NINA installation and its settings. Camera captures, USB disconnections and ASCOM/NINA integration have not yet been tested on hardware with this prerelease.
+These are native-driver packages, not an ASCOM installer. The release is marked regular/Latest on GitHub; the original preview.1 tag and filenames remain valid. Keep your existing working ASCOM/NINA installation and its settings. Camera captures, USB disconnections and ASCOM/NINA integration have not yet been tested on hardware with this prerelease.
 
 ## Choose and verify a download
 
