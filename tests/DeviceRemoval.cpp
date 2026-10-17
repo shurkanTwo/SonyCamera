@@ -205,6 +205,18 @@ namespace
         bool Succeeded() const { return success; }
     };
 
+    void PropertyCopyContract()
+    {
+        // A default/partially described production property has no default
+        // value yet. Cloning it must preserve that absence, without crashing.
+        CameraProperty property;
+        property.SetId(Property::PhotoBufferStatus);
+        property.SetCurrentValue(new PropertyValue(static_cast<UINT16>(0)));
+        std::unique_ptr<CameraProperty> copy(property.Clone());
+        Check(copy->GetCurrentValue()->GetUINT16() == 0, "property clone lost its current value");
+        Check(copy->GetInfo()->GetDefault() == nullptr, "property clone invented missing default");
+    }
+
     void TerminalFailures()
     {
         const HRESULT failures[] = { static_cast<HRESULT>(0x802A0002L), static_cast<HRESULT>(0x802A0006L),
@@ -442,6 +454,7 @@ int main()
     if (FAILED(initialized)) return 2;
     try
     {
+        std::cerr << "[DEBUG-native-removal] PropertyCopyContract\n"; PropertyCopyContract();
         std::cerr << "[DEBUG-native-removal] TerminalFailures\n"; TerminalFailures();
         std::cerr << "[DEBUG-native-removal] ReopenAndNonterminalErrors\n"; ReopenAndNonterminalErrors();
         std::cerr << "[DEBUG-native-removal] CallbackOwnership\n"; CallbackOwnership();
