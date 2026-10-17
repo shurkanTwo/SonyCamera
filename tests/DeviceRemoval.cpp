@@ -6,7 +6,6 @@
 #include "CameraWorkerFunctions.h"
 #include <PortableDevice.h>
 #include <WpdMtpExtensions.h>
-#include <atomic>
 #include <thread>
 #include <stdexcept>
 #include <vector>
@@ -366,24 +365,28 @@ namespace
         HANDLE entered = CreateEvent(nullptr, TRUE, FALSE, nullptr);
         HANDLE resume = CreateEvent(nullptr, TRUE, FALSE, nullptr);
         HANDLE notified = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        HANDLE finished = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        struct Gates { HANDLE entered; HANDLE resume; HANDLE finished; } gates{entered, resume, finished};
         class BlockingTask : public CameraTask
         {
         public:
-            BlockingTask(HANDLE entered, HANDLE resume) : CameraTask(L"TestBlockingWorker")
+            explicit BlockingTask(Gates* gates) : CameraTask(L"TestBlockingWorker")
             {
-                SetParam1(entered); SetParam2(resume);
+                SetParam1(gates);
                 StateStepInfo step = {};
                 step.id = 0; step.isTerminal = true;
                 step.handler = [](CameraTaskInfo& info) {
-                    SetEvent(info.pTask->GetParam1());
-                    WaitForSingleObject(info.pTask->GetParam2(), 5000);
+                    auto* gates = static_cast<Gates*>(info.pTask->GetParam1());
+                    SetEvent(gates->entered);
+                    WaitForSingleObject(gates->resume, 5000);
+                    SetEvent(gates->finished);
                     return StateResult::Success;
                 };
                 AddStep(step);
             }
         };
         camera.GetWorker()->OnCameraStateChange(CameraState::Connected);
-        auto* task = new BlockingTask(entered, resume);
+        auto* task = new BlockingTask(&gates);
         task->QueueAndForget(&camera);
         Check(WaitForSingleObject(entered, 5000) == WAIT_OBJECT_0, "worker did not enter blocking task");
         IPortableDeviceValues* event = nullptr;
@@ -404,10 +407,11 @@ namespace
         // fails with evidence rather than deadlocking the CI process.
         SetEvent(resume);
         notification.join();
+        Check(WaitForSingleObject(finished, 5000) == WAIT_OBJECT_0, "worker did not leave blocking task");
         callback->Release(); event->Release();
         camera.GetWorker()->OnCameraStateChange(CameraState::Disconnected);
         device.StopNotifications();
-        CloseHandle(entered); CloseHandle(resume); CloseHandle(notified);
+        CloseHandle(entered); CloseHandle(resume); CloseHandle(notified); CloseHandle(finished);
         Check(returnedWhileWorkerBusy, "callback blocked on busy worker during teardown");
         device.Close();
     }

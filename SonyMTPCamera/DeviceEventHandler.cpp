@@ -198,9 +198,9 @@ DeviceEventHandler::OnEvent(IPortableDeviceValues* pEventParameters)
 #ifdef DUMP_EVENT_PARAMS
         IPortableDevicePropVariantCollection* pdpvc = nullptr;
 
-        hr = pEventParameters->GetIPortableDevicePropVariantCollectionValue(WPD_PROPERTY_MTP_EXT_EVENT_PARAMS, &pdpvc);
+        HRESULT optionalResult = pEventParameters->GetIPortableDevicePropVariantCollectionValue(WPD_PROPERTY_MTP_EXT_EVENT_PARAMS, &pdpvc);
 
-        if (SUCCEEDED(hr) && pdpvc)
+        if (SUCCEEDED(optionalResult) && pdpvc)
         {
             DWORD count = 0;
             pdpvc->GetCount(&count);

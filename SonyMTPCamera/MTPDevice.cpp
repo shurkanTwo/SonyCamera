@@ -455,7 +455,7 @@ MTPDevice::InternalSend(Device::Op kind, Message* out)
     }
 
     HRESULT  hr = S_OK;
-    IPortableDeviceValues* pDevValues;
+    IPortableDeviceValues* pDevValues = nullptr;
     Message* result = new Message(0);
     PROPERTYKEY opType;
 
