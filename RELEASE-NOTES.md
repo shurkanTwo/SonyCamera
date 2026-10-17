@@ -2,7 +2,7 @@
 
 ## 1.0.1.23-device-removal-test.1 — experimental candidate
 
-Preserve @totoantibes's original PR #16 commit on an isolated review branch, then correct nested-open removal state, notification COM lifetime and capture-failure completion. Add real-production-object fault injection, per-device notification cookies, safe missing-event handling and callback work queued without blocking the camera worker. Reopen recovery requires a successful fresh session; this is not transparent hot reconnection.
+Preserve @totoantibes's original PR #16 commit on an isolated review branch, then correct nested-open removal state, notification COM lifetime and capture-failure completion. Fix pre-existing property-copy crashes for missing defaults and uninitialized owned pointers. Add real-production-object fault injection, per-device notification cookies, safe missing-event handling and callback work queued without blocking the camera worker. Reopen recovery requires a successful fresh session; this is not transparent hot reconnection.
 
 Windows automated checks and the complete source rebuild must pass before hardware testing. Physical camera/USB teardown and ASCOM/NINA compatibility remain unverified. The upstream author reports remaining crashes; no claim is made that issue #15 is resolved. See HARDWARE-TESTING.md for acceptance and rollback. This candidate is not merged into workerThread or the published release.
 

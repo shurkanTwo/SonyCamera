@@ -7,29 +7,12 @@
 #include <PortableDevice.h>
 #include <WpdMtpExtensions.h>
 #include <thread>
-#include <dbghelp.h>
+#include <new>
 #include <stdexcept>
 #include <vector>
 
 namespace
 {
-    LONG WINAPI DiagnoseCrash(EXCEPTION_POINTERS* exception)
-    {
-        HANDLE process = GetCurrentProcess();
-        SymInitialize(process, nullptr, TRUE);
-        std::cerr << "[DEBUG-native-removal] exception=" << std::hex << exception->ExceptionRecord->ExceptionCode << '\n';
-        DWORD64 address = reinterpret_cast<DWORD64>(exception->ExceptionRecord->ExceptionAddress);
-        alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME] = {};
-        auto* symbol = reinterpret_cast<SYMBOL_INFO*>(buffer);
-        symbol->SizeOfStruct = sizeof(SYMBOL_INFO); symbol->MaxNameLen = MAX_SYM_NAME;
-        DWORD64 displacement = 0;
-        if (SymFromAddr(process, address, &displacement, symbol)) std::cerr << "[DEBUG-native-removal] " << symbol->Name << '\n';
-        IMAGEHLP_LINE64 line = {}; line.SizeOfStruct = sizeof(line);
-        DWORD offset = 0;
-        if (SymGetLineFromAddr64(process, address, &offset, &line)) std::cerr << "[DEBUG-native-removal] " << line.FileName << ':' << std::dec << line.LineNumber << '\n';
-        return EXCEPTION_EXECUTE_HANDLER;
-    }
-
     int checks = 0;
     void Check(bool condition, const char* message)
     {
@@ -220,7 +203,7 @@ namespace
         // Poisoning the destination makes an uninitialized pointer deterministic.
         alignas(CameraProperty) unsigned char storage[sizeof(CameraProperty)];
         memset(storage, 0xa5, sizeof(storage));
-        std::cerr << "[DEBUG-native-removal] PropertyCopyOwnership\n";
+        std::cerr << "[device-removal] PropertyCopyOwnership\n";
         CameraProperty* reused = new (storage) CameraProperty(property);
         Check(reused->GetCurrentValue()->GetUINT16() == 0, "copy into reused storage lost value");
         reused->SetCurrentValue(new PropertyValue(static_cast<UINT16>(7)));
@@ -460,18 +443,17 @@ namespace
 
 int main()
 {
-    SetUnhandledExceptionFilter(DiagnoseCrash);
     HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(initialized)) return 2;
     try
     {
-        std::cerr << "[DEBUG-native-removal] PropertyCopyContract\n"; PropertyCopyContract();
-        std::cerr << "[DEBUG-native-removal] TerminalFailures\n"; TerminalFailures();
-        std::cerr << "[DEBUG-native-removal] ReopenAndNonterminalErrors\n"; ReopenAndNonterminalErrors();
-        std::cerr << "[DEBUG-native-removal] CallbackOwnership\n"; CallbackOwnership();
-        std::cerr << "[DEBUG-native-removal] RefreshAndDownload\n"; RefreshAndDownload();
-        std::cerr << "[DEBUG-native-removal] ConcurrentShutdown\n"; ConcurrentShutdown();
-        std::cerr << "[DEBUG-native-removal] BusyWorkerCallback\n"; BusyWorkerCallback();
+        std::cerr << "[device-removal] PropertyCopyContract\n"; PropertyCopyContract();
+        std::cerr << "[device-removal] TerminalFailures\n"; TerminalFailures();
+        std::cerr << "[device-removal] ReopenAndNonterminalErrors\n"; ReopenAndNonterminalErrors();
+        std::cerr << "[device-removal] CallbackOwnership\n"; CallbackOwnership();
+        std::cerr << "[device-removal] RefreshAndDownload\n"; RefreshAndDownload();
+        std::cerr << "[device-removal] ConcurrentShutdown\n"; ConcurrentShutdown();
+        std::cerr << "[device-removal] BusyWorkerCallback\n"; BusyWorkerCallback();
         std::cout << "{\"checks\":" << checks
             << ",\"terminalFaultScenarios\":48,\"productionObjectsLinked\":true,\"physicalCamera\":false}\n";
     }

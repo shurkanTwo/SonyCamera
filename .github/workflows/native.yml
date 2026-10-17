@@ -18,7 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+      - name: Fetch fixed upstream baseline for the allocation regression check
+        shell: pwsh
+        run: |
+          git fetch --no-tags --depth=1 origin 21f469f6d2e9516ec4896eaa0ec9c45c4e96d92d
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline source fetch failed.' }
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         id: dependencies
         with:

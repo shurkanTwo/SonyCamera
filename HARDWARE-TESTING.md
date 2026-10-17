@@ -4,9 +4,13 @@ This branch prepares **1.0.1.23-device-removal-test.1**, native file version **1
 
 ## What the automated tests cover
 
-The test executable links the same production object files as the native DLL. It substitutes only a fake IPortableDevice endpoint, retaining real Windows WPD parameter/result collections and real MTPDevice, DeviceEventHandler, Camera and capture-task logic. It injects six terminal HRESULTs through both direct transport errors and WPD result errors at execute/read/write/end phases (48 scenarios). Other checks cover nested opens, failed/successful genuine reopen, nonterminal errors, failed close, notification ownership/cookies, late callbacks after failed Unadvise, missing event fields, five failed refreshes and the full failed-image download task.
+The test executable links the same production object files as the native DLL. It substitutes only a fake IPortableDevice endpoint, retaining real Windows WPD parameter/result collections and real MTPDevice, DeviceEventHandler, Camera and capture-task logic. It injects six terminal HRESULTs through both direct transport errors and WPD result errors at execute/read/write/end phases (48 scenarios). Other checks cover nested opens, failed/successful genuine reopen, nonterminal errors, failed close, notification ownership/cookies, late callbacks after failed Unadvise, missing event fields, five failed refreshes partial JPEG/RAW failures, 64 concurrent shutdown cycles, callback liveness while the worker is busy, and the full failed-image download task. Property copy checks cover absent defaults and ownership when object storage is reused.
 
 These checks do not reproduce Windows USB driver teardown, physical camera timing, image fidelity or ASCOM/NINA integration. Passing them is a prerequisite for hardware testing, not proof that removing a camera is safe. The upstream author reports remaining unexplained abnormal exits even with the original PR #16.
+
+The callback queue uses a zero timeout while the worker is busy. A notification can be dropped in that case; existing capture/idle polling provides the fallback. The tests check this liveness behavior, while hardware acceptance must check normal capture timing and completeness.
+
+See [the review record](docs/REVIEW-PR16.md) for findings, corrections and limits.
 
 ## Obtain and identify the candidate
 
