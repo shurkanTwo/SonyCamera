@@ -541,6 +541,11 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
 
     bool result = false;
 
+    // Set when a task from the previous capture refuses to cancel. While such a
+    // task is still running nothing of its state may be reset or freed, and the
+    // caller must not be told the camera is ready for a fresh capture.
+    bool previousWorkOutstanding = false;
+
     DWORD waitResult = WaitForSingleObject(m_hBusyMutex, 1000);
 
     if (waitResult == WAIT_OBJECT_0)
@@ -549,13 +554,17 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
         {
             {
                 LOGINFO(L"There's a pre-existing capture, attempting to clean up");
-                if (m_takePhotoTask->Cancel(20000) == WAIT_OBJECT_0)
+                if (m_takePhotoTask->Cancel(m_previousTaskCancelTimeoutMs) == WAIT_OBJECT_0)
                 {
                     // Task successfully cancelled
                     delete m_takePhotoTask;
                     m_takePhotoTask = nullptr;
                 }
-                //                CleanupCapture();
+                else
+                {
+                    LOGERROR(L"The pre-existing capture would not cancel; leaving it in place");
+                    previousWorkOutstanding = true;
+                }
             }
         }
 
@@ -563,26 +572,45 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
         {
             {
                 LOGINFO(L"There's a pre-existing download, attempting to clean up");
-                if (m_downloadAndProcessImageTask->Cancel(20000) == WAIT_OBJECT_0)
+                if (m_downloadAndProcessImageTask->Cancel(m_previousTaskCancelTimeoutMs) == WAIT_OBJECT_0)
                 {
                     // Task successfully cancelled
-                    delete m_downloadAndProcessImageTask;;
+                    delete m_downloadAndProcessImageTask;
                     m_downloadAndProcessImageTask = nullptr;
                 }
-                //                CleanupCapture();
+                else
+                {
+                    LOGERROR(L"The pre-existing download would not cancel; leaving it in place");
+                    previousWorkOutstanding = true;
+                }
             }
         }
 
-        if (m_takePhotoTaskParams)
+        // TakePhotoTask keeps this pointer for as long as it runs, so freeing
+        // it while a task that would not cancel is still alive is a
+        // use-after-free in precisely the case that matters.
+        if (m_takePhotoTaskParams && !previousWorkOutstanding)
         {
             delete m_takePhotoTaskParams;
             m_takePhotoTaskParams = nullptr;
         }
 
-        SetCaptureStatus(CaptureStatus::Created);
+        if (!previousWorkOutstanding)
+        {
+            SetCaptureStatus(CaptureStatus::Created);
+        }
     }
 
     ReleaseMutex(m_hBusyMutex);
+
+    // Reported only once the mutex is released, so the failure path cannot leak
+    // it. The status used to be set to Created either way, which told the
+    // caller a fresh capture was pending while the previous download was still
+    // running - and the next shutter release then went out on top of it.
+    if (previousWorkOutstanding)
+    {
+        throw CameraException(L"Previous capture is still running; not starting another");
+    }
 
     // Get camera settings... this serves two purposes
     // 1. Ensure camera is in a state that will allow a photo to be taken
@@ -629,21 +657,53 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
         DoRefreshProperties();
     }
 
-    while (WORD bufferStatus = cs->GetPropertyValue(Property::PhotoBufferStatus)->GetUINT16() != 0)
-    {
-        std::unique_ptr<CameraSettings> cs(GetSettings());
+    // Clear any photo the camera is already holding, whether the user took it
+    // with the shutter button or a previous download left it behind. Releasing
+    // the shutter while an image is still pending is what wedges the camera, so
+    // this has to actually succeed before the capture goes ahead.
+    //
+    // Three defects used to live in this loop, and the first two together meant
+    // that entering it was the same as never leaving it:
+    //
+    //   - `WORD bufferStatus = ...->GetUINT16() != 0` assigned the result of the
+    //     comparison, not the status word, because != binds tighter than =. So
+    //     bufferStatus was only ever 0 or 1, and `bufferStatus & 0x8000` - the
+    //     branch that actually retrieves the pending photo - was unreachable.
+    //   - the condition re-read a CameraSettings captured before the loop, and
+    //     GetSettings() returns a copy. The re-fetch in the body declared a new
+    //     `cs` that shadowed it and was then discarded, so DoRefreshProperties()
+    //     could never change the value the condition tested.
+    //   - PhotoBufferStatus was dereferenced without the null check the rest of
+    //     this function applies, and some models advertise a property without
+    //     ever returning it.
+    //
+    // The timeout exists so that a camera which reports a pending photo it will
+    // not hand over fails the capture instead of blocking the caller forever.
+    const DWORD drainTimeoutMs = m_pendingPhotoDrainTimeoutMs;
+    const ULONGLONG drainStartedAt = GetTickCount64();
 
-        if (bufferStatus == 0x0001)
+    for (;;)
+    {
+        std::unique_ptr<CameraSettings> drainSettings(GetSettings());
+        PropertyValue* bufferValue = drainSettings ? drainSettings->GetPropertyValue(Property::PhotoBufferStatus) : nullptr;
+
+        if (!bufferValue)
         {
-            // Camera is busy getting a photo ready for us
-            LOGTRACE(L"  Waiting for camera to have previous photo ready");
-            Sleep(100);
+            LOGWARN(L"PhotoBufferStatus is unreported; assuming the camera holds no photo");
+            break;
+        }
+
+        WORD bufferStatus = bufferValue->GetUINT16();
+
+        if (bufferStatus == 0)
+        {
+            break;
         }
 
         if (bufferStatus & 0x8000)
         {
             // Photo is ready... we don't actually want it, so we'll just toss whatever we get back
-            LOGTRACE(L"  Previous photo is ready to retrieve");
+            LOGTRACE(L"  Previous photo is ready to retrieve (buffer status x%04x)", bufferStatus);
             Image* iimage = GetImage(FULL_IMAGE);
 
             if (iimage)
@@ -653,6 +713,18 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
 
             LOGTRACE(L"  Previous photo retrieved and discarded");
         }
+        else
+        {
+            // Camera is busy getting a photo ready for us
+            LOGTRACE(L"  Waiting for camera to have previous photo ready (buffer status x%04x)", bufferStatus);
+            Sleep(100);
+        }
+
+        if (GetTickCount64() - drainStartedAt > drainTimeoutMs)
+        {
+            LOGERROR(L"Camera still reports a pending photo (buffer status x%04x) after %dms; not releasing the shutter on top of it", bufferStatus, drainTimeoutMs);
+            throw CameraException(L"Camera is still holding a previous photo");
+        }
 
         // Re-fetch settings
         DoRefreshProperties();
@@ -660,13 +732,24 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
 
     cs = std::unique_ptr<CameraSettings>(GetSettings());
 
-    if (cs->GetPropertyValue(Property::ShutterButtonStatus)->GetUINT8() == 1)
+    // Null checks for the same reason as the ones above: a model may advertise
+    // a property and then never return it, and these two were dereferenced
+    // unconditionally - a crash on the line after the loop this change fixes.
+    PropertyValue* shutterButton = cs->GetPropertyValue(Property::ShutterButtonStatus);
+
+    if (!shutterButton)
+    {
+        LOGERROR(L"StartCapture: ShutterButtonStatus is unreported; cannot tell whether the shutter is free");
+        throw CameraException(L"Could not read shutter button status");
+    }
+
+    if (shutterButton->GetUINT8() == 1)
     {
         LOGTRACE(L"  Shutter button is UP");
 
         PropertyValue* exposureTime = cs->GetPropertyValue(Property::ShutterSpeed);
 
-        if (exposureTime->GetType() == DataType::UNKNOWN)
+        if (!exposureTime || exposureTime->GetType() == DataType::UNKNOWN)
         {
             throw CameraException(L"Could not fetch exposure time");
         }
@@ -693,7 +776,7 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
     }
     else
     {
-        LOGWARN(L"StartCapture: Cannot start capture as someone has their finger on the shutter button (%s)", cs->GetPropertyValue(Property::ShutterButtonStatus)->ToString().c_str());
+        LOGWARN(L"StartCapture: Cannot start capture as someone has their finger on the shutter button (%s)", shutterButton->ToString().c_str());
         throw CameraException(L"Cannot start capture as shutter already open");
     }
 

@@ -128,6 +128,14 @@ protected:
     TakePhotoTaskParams* m_takePhotoTaskParams = nullptr;
     CaptureStatus m_captureStatus = CaptureStatus::Created;
 
+    // How long StartCapture will keep trying to clear a photo the camera is
+    // already holding before it refuses to release the shutter, and how long it
+    // waits for a task left over from the previous capture to cancel. Named
+    // members rather than literals so both waits are visible in one place and a
+    // subclass can shorten them without changing the shipped values.
+    DWORD m_pendingPhotoDrainTimeoutMs = 20000;
+    DWORD m_previousTaskCancelTimeoutMs = 20000;
+
 private:
     // Consecutive failed settings refreshes with no success in between, and
     // how many of them mean the device is gone rather than merely awkward.
