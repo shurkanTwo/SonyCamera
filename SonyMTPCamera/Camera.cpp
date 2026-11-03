@@ -952,23 +952,86 @@ Camera::GetCapturedImage()
 bool
 Camera::CancelCapture()
 {
+    // Two callers, both of which need the capture to end up in a terminal
+    // state: the CancelCapture export, when the host abandons an exposure, and
+    // CleanupCapture, after a frame has been retrieved successfully.
+    // GetCaptureStatus is what a host polls to decide whether another exposure
+    // may start, so a capture left non-terminal refuses every later frame until
+    // the camera is reconnected - one lost frame becomes a lost session.
+    //
+    // Two defects made this unusable for the abandonment case, which is why
+    // native cancellation had to be turned off:
+    //
+    //   - m_takePhotoTask was deleted whether or not it had actually cancelled,
+    //     so abandoning a hung exposure freed an object the worker thread was
+    //     still running. A task that will not cancel is now left in place;
+    //     StartCapture already refuses while one is there, which is a refused
+    //     frame rather than an access violation.
+    //   - m_downloadAndProcessImageTask was never touched, so a download still
+    //     in flight survived the cancel. It is now cancelled on the same terms,
+    //     which also makes good on "this deletes image too" in the comment at
+    //     the GetCaptureStatus call site: the Image belongs to that task, and
+    //     by the time CleanupCapture runs its bytes have already been copied
+    //     out by exportBytes.
+    bool cancelledCleanly = true;
+
     DWORD waitResult = WaitForSingleObject(m_hBusyMutex, 1000);
 
     if (waitResult == WAIT_OBJECT_0)
     {
         if (m_takePhotoTask)
         {
-            m_takePhotoTask->Cancel(20000);
-            delete m_takePhotoTask;
-            m_takePhotoTask = nullptr;
+            if (m_takePhotoTask->Cancel(m_previousTaskCancelTimeoutMs) == WAIT_OBJECT_0)
+            {
+                delete m_takePhotoTask;
+                m_takePhotoTask = nullptr;
+            }
+            else
+            {
+                LOGERROR(L"CancelCapture: the capture task would not cancel; leaving it in place rather than freeing it under the worker");
+                cancelledCleanly = false;
+            }
         }
+
+        if (m_downloadAndProcessImageTask)
+        {
+            if (m_downloadAndProcessImageTask->Cancel(m_previousTaskCancelTimeoutMs) == WAIT_OBJECT_0)
+            {
+                delete m_downloadAndProcessImageTask;
+                m_downloadAndProcessImageTask = nullptr;
+            }
+            else
+            {
+                LOGERROR(L"CancelCapture: the download task would not cancel; leaving it in place rather than freeing it under the worker");
+                cancelledCleanly = false;
+            }
+        }
+
+        // Held by TakePhotoTask for as long as it runs, so only safe to free
+        // once nothing that could still read it is alive.
+        if (cancelledCleanly && m_takePhotoTaskParams)
+        {
+            delete m_takePhotoTaskParams;
+            m_takePhotoTaskParams = nullptr;
+        }
+
+        // Marked terminal in every case, including when a task refused to
+        // cancel: the host has given up on this exposure either way, and
+        // leaving the status non-terminal is the difference between losing a
+        // frame and losing a night. Set while the mutex is still held - the
+        // handle is recursive - so a capture started in between cannot be
+        // marked cancelled by mistake.
+        SetCaptureStatus(CaptureStatus::Cancelled);
+
+        ReleaseMutex(m_hBusyMutex);
+    }
+    else
+    {
+        LOGERROR(L"CancelCapture: could not take the busy mutex; marking the capture cancelled regardless");
+        SetCaptureStatus(CaptureStatus::Cancelled);
     }
 
-    SetCaptureStatus(CaptureStatus::Cancelled);
-
-    ReleaseMutex(m_hBusyMutex);
-
-    return true;
+    return cancelledCleanly;
 }
 
 void
