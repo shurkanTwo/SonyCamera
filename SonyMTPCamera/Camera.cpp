@@ -155,7 +155,7 @@ Camera::Open()
 
     HANDLE hCamera = m_device->Open();
 
-    if (hCamera != INVALID_HANDLE_VALUE)
+    if (hCamera != INVALID_HANDLE_VALUE && hCamera != nullptr)
     {
         if (m_device->GetOpenCount() == 1)
         {
@@ -164,6 +164,15 @@ Camera::Open()
 
         pWorker->OnCameraStateChange(CameraState::Connected);
         RefreshDeviceInfo();
+    }
+    else
+    {
+        // Connecting is a state nothing else ever leaves, because the only
+        // transitions out of it are the two in this file.  A failed open that
+        // left it set made every later task unrunnable, and an unrunnable task
+        // used to wait forever.  Say what is true instead: the device did not
+        // open, so the camera is disconnected.
+        pWorker->OnCameraStateChange(CameraState::Disconnected);
     }
 
     return hCamera;

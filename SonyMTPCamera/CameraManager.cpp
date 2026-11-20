@@ -5,6 +5,18 @@
 #include "Registry.h"
 static CameraManager* cameraManager = nullptr;
 
+namespace
+{
+    // Camera::Open hands back the device handle, or nothing.  Both spellings of
+    // nothing have been seen in the wild: INVALID_HANDLE_VALUE from a device
+    // that refused to open, and a null handle from one that never created its
+    // event.  Neither is a camera you can talk to.
+    bool IsOpenedHandle(HANDLE handle)
+    {
+        return handle != INVALID_HANDLE_VALUE && handle != nullptr;
+    }
+}
+
 CameraManager::CameraManager()
 {
 
@@ -1055,6 +1067,10 @@ CameraManager::CreateCamera(Device* device, DWORD flags)
     LOGTRACE(L"In: CameraManager::CreateCamera(device='%s', flags=x%08x)", device->GetFriendlyName().c_str(), flags);
     Camera* camera = nullptr;
     HANDLE hResult = INVALID_HANDLE_VALUE;
+    // A camera we already hold that fails to re-open must not fall through to
+    // the branch below and be built a second time: that would leave two camera
+    // objects, two worker threads and two sessions for one device.
+    bool known = false;
 
     // See if we already have this device
     for (auto it = m_cameraMap.begin(); it != m_cameraMap.end() && hResult == INVALID_HANDLE_VALUE; it++)
@@ -1062,17 +1078,28 @@ CameraManager::CreateCamera(Device* device, DWORD flags)
         if ((*it).second->GetId() == device->GetId())
         {
             camera = (*it).second;
+            known = true;
             LOGTRACE(L"CameraManager::CreateCamera: Found existing camera with handle x%08x", (*it).first);
 
             OpenCameraTask task;
 
             task.Run(camera);
 
-            hResult = CompatibleHandle(task.GetHandle());
+            // A handle is the only evidence that the device actually opened.
+            // The open step reports success whether or not the device answered,
+            // so a shut device used to be handed back as a working camera.
+            if (IsOpenedHandle(task.GetHandle()))
+            {
+                hResult = CompatibleHandle(task.GetHandle());
+            }
+            else
+            {
+                LOGERROR(L"CameraManager::CreateCamera: '%s' is known but did not re-open", device->GetFriendlyName().c_str());
+            }
         }
     }
 
-    if (hResult == INVALID_HANDLE_VALUE)
+    if (hResult == INVALID_HANDLE_VALUE && !known)
     {
         // As long as the camera entry is in the registry, we're good to go
         std::wostringstream builder;
@@ -1088,9 +1115,20 @@ CameraManager::CreateCamera(Device* device, DWORD flags)
 
             OpenCameraTask task;
 
-            if (task.Run(camera))
+            if (task.Run(camera) && IsOpenedHandle(task.GetHandle()))
             {
                 hResult = AddCamera(task.GetHandle(), camera);
+            }
+            else
+            {
+                // Registering a camera whose device never opened is what left
+                // OpenDeviceEx initializing a camera it could not talk to.
+                // Discard it instead, so the caller sees a failed open.
+                LOGERROR(L"CameraManager::CreateCamera: '%s' did not open - discarding it rather than registering a camera whose device is shut",
+                    device->GetFriendlyName().c_str());
+
+                delete camera;
+                camera = nullptr;
             }
         }
         else
@@ -1123,6 +1161,15 @@ HANDLE
 CameraManager::CompatibleHandle(HANDLE handle)
 {
 #if _WIN64
+    // INVALID_HANDLE_VALUE must survive the trim.  Keeping only the low half
+    // of it produces x00000000ffffffff, which no longer compares equal to
+    // INVALID_HANDLE_VALUE, so a failure stopped looking like one to every
+    // caller that tests for it - including CreateCamera's own loop.
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        return handle;
+    }
+
     uint64_t temp = (uint64_t)handle & 0xffffffff;
 
     return (HANDLE)temp;

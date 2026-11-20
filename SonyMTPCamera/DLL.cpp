@@ -179,7 +179,20 @@ OpenDeviceEx(LPWSTR deviceName, DWORD flags)
         {
             LOGINFO(L"OpenDevice: Found device... trying to create/open");
             result = GetCameraManager()->CreateCamera(*it, (flags & OPENDEVICEEX_OPEN_ANY_DEVICE) ? OPEN_OVERRIDE : 0);
-            Camera* camera = GetCameraManager()->GetCameraForHandle(result);
+            Camera* camera = result != INVALID_HANDLE_VALUE ? GetCameraManager()->GetCameraForHandle(result) : nullptr;
+
+            if (!camera)
+            {
+                // The open failed, so there is nothing to initialize.  Going on
+                // regardless is how a device that was no longer on the bus got
+                // an InitializeCameraTask it could never run, which blocked
+                // this call until the caller gave up and left the worker
+                // spinning for the life of the process.
+                LOGERROR(L"OpenDevice: '%s' did not open - not initializing a camera that is not there", deviceId.c_str());
+
+                result = INVALID_HANDLE_VALUE;
+                continue;
+            }
 
             try
             {
@@ -212,11 +225,16 @@ OpenDeviceEx(LPWSTR deviceName, DWORD flags)
             {
                 LOGERROR(L"Exception initializing camera: %s", gfe.GetMessage().c_str());
 
-                result = INVALID_HANDLE_VALUE;
+                // Remove it by the handle it was registered under.  Clearing
+                // result first meant this asked the manager to forget
+                // INVALID_HANDLE_VALUE, so the camera stayed in the map and was
+                // then deleted - leaving a dangling entry that the next open of
+                // the same device would find and use.
                 camera->Close();
                 GetCameraManager()->RemoveCamera(result);
                 delete camera;
                 camera = nullptr;
+                result = INVALID_HANDLE_VALUE;
             }
         }
     }
