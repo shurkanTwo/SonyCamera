@@ -334,7 +334,7 @@ RefreshPropertiesTask::RefreshPropertiesTask(bool refreshFakePropertiesToo)
         },
     };
 
-    SetParam1((void *)(refreshFakePropertiesToo ? 1 : 0));
+    SetParam1((void*)(DWORD_PTR)(refreshFakePropertiesToo ? 1 : 0));
     SetSteps(steps);
 }
 

@@ -102,7 +102,8 @@ CameraSupportedProperties::AsString()
 DWORD
 CameraSupportedProperties::Size()
 {
-    return m_lista.size() + m_listb.size();
+    // Two lists of property ids from one camera: tens of entries.
+    return (DWORD)(m_lista.size() + m_listb.size());
 }
 
 std::list<Property>

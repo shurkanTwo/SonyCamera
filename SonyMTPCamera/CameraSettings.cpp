@@ -129,7 +129,8 @@ CameraSettings::cfind(const Property id) const
 int
 CameraSettings::size() const
 {
-    return m_properties.size();
+    // One camera's property map: tens of entries, nowhere near INT_MAX.
+    return (int)m_properties.size();
 }
 
 CameraProperty*

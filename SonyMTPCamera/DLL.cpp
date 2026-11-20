@@ -147,7 +147,7 @@ GetDeviceCount()
 
     deviceManager->RefreshDevices();
 
-    DWORD count = deviceManager->GetFilteredDevices().size();
+    DWORD count = (DWORD)deviceManager->GetFilteredDevices().size();
 
     LOGTRACE(L"Out: GetDeviceCount() = %d", count);
 
@@ -889,7 +889,7 @@ GetPortableDeviceCount()
 {
     LOGTRACE(L"In: GetPortableDeviceCount()");
 
-    DWORD result = deviceManager->GetAllDevices(true).size();
+    DWORD result = (DWORD)deviceManager->GetAllDevices(true).size();
 
     LOGTRACE(L"Out: GetPortableDeviceCount() - returning %d", result);
 
@@ -941,7 +941,7 @@ GetSupportedDeviceCount()
 
     // Refresh before getting list
     deviceManager->GetAllDevices(true);
-    DWORD result = deviceManager->GetFilteredDevices().size();
+    DWORD result = (DWORD)deviceManager->GetFilteredDevices().size();
 
     LOGTRACE(L"Out: GetSupportedDeviceCount() - returning %d", result);
 
@@ -1075,7 +1075,7 @@ GetPropertyDescriptor(HANDLE hCamera, DWORD propertyId, PROPERTYDESCRIPTOR* desc
             descriptor->type = (WORD)info->GetType();
             descriptor->flags = (WORD)((WORD)info->GetAccess() || ((WORD)info->GetSonySpare() << 8));
             descriptor->name = exportString(name.empty() ? L"?" : name);
-            descriptor->valueCount = info->GetFormMode() == FormMode::ENUMERATION ? info->GetEnumeration().size() : 0;
+            descriptor->valueCount = info->GetFormMode() == FormMode::ENUMERATION ? (DWORD)info->GetEnumeration().size() : 0;
 
             #ifdef DEBUG
                 LOGTRACE(L"Out: GetPropertyDescriptor(x%p, x%04x, ...)", hCamera, propertyId);
@@ -1600,7 +1600,7 @@ IMPEXP DWORD GetLensCount()
         lensPath << L"Lenses\\" << manufacturer;
 
         std::list<std::wstring> lenses = registry.GetChildKeys(lensPath.str());
-        count += lenses.size();
+        count += (DWORD)lenses.size();
     }
 
     registry.Close();

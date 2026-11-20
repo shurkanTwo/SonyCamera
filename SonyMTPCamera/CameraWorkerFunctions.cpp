@@ -10,7 +10,7 @@ refreshSettings(CameraTaskInfo& info)
 {
     try
     {
-        bool succeeded = info.pCamera->RefreshSettings((int)info.pTask->GetParam1() != 0);
+        bool succeeded = info.pCamera->RefreshSettings((DWORD_PTR)info.pTask->GetParam1() != 0);
         info.pCamera->RecordSettingsRefreshResult(succeeded);
     }
     catch (CameraException& ex)
