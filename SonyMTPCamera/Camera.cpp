@@ -633,9 +633,13 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
     // so we don't need all these checks.
     PropertyValue* v = cs->GetPropertyValue(Property::ShutterFullDown);
 
+    // Reported at error level, not warning: this is the recovery for a camera
+    // that came back with its shutter button still held, and at the default log
+    // level a warning is not written at all. Finding the button down here is the
+    // evidence that the previous capture's release never arrived.
     if (!v || v->GetUINT16() != up.GetUINT16())
     {
-        LOGWARN(L"ShutterFullDown is %s, clearing", v ? L"set" : L"unreported");
+        LOGERROR(L"ShutterFullDown is %s, clearing", v ? L"set" : L"unreported");
 
         SetProperty(Property::ShutterFullDown, &up);
 
@@ -648,9 +652,12 @@ Camera::StartCapture(double duration, OutputMode outputMode, DWORD flags)
 
     if (!v || v->GetUINT16() != up.GetUINT16())
     {
-        LOGWARN(L"ShutterHalfDown is %s, clearing", v ? L"set" : L"unreported");
-        PropertyValue up((WORD)1);
+        LOGERROR(L"ShutterHalfDown is %s, clearing", v ? L"set" : L"unreported");
 
+        // This used to declare its own `up` of 1, shadowing the one computed
+        // from the button polarity above. On a body whose button properties are
+        // inverted, 1 is DOWN - so the half-press recovery pressed the button it
+        // was there to release.
         SetProperty(Property::ShutterHalfDown, &up);
 
         // Re-fetch settings
