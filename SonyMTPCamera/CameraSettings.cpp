@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "CameraSettings.h"
 #include "CameraProperty.h"
 #include "Logger.h"
@@ -145,6 +145,14 @@ PropertyValue*
 CameraSettings::GetPropertyValue(Property id) const
 {
     CameraProperty* p = GetProperty(id);
+
+    // GetProperty returns null for an id the camera does not report, and this
+    // dereferenced it unconditionally - the same crash as SetPropertyValue, one
+    // layer down, reachable from every caller.
+    if (!p)
+    {
+        return nullptr;
+    }
 
     if (p->GetInfo()->GetType() != DataType::UNKNOWN)
     {

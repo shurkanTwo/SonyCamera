@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "MTPDevice.h"
 #include "Camera.h"
 #include "CameraException.h"
@@ -209,6 +209,32 @@ namespace
         reused->SetCurrentValue(new PropertyValue(static_cast<UINT16>(7)));
         Check(property.GetCurrentValue()->GetUINT16() == 0, "property copy shared owned value");
         reused->~CameraProperty();
+    }
+
+    void MissingPropertyIsNotDereferenced()
+    {
+        // A camera that has stopped answering reports no properties at all.
+        // Measured on the rig 2026-11-20 15:53:53: the body returned a
+        // truncated device-info payload, the driver accepted it and logged
+        // "Device Properties Supported 0 properties", and the next property
+        // lookup was dereferenced with no check.  An access violation inside a
+        // P/Invoke is not a catchable exception, so NINA died outright.
+        CameraSettings empty;
+        Check(empty.size() == 0, "a default CameraSettings reported properties");
+        Check(empty.GetProperty(Property::PhotoBufferStatus) == nullptr,
+            "a property the camera does not report was invented");
+        Check(empty.GetPropertyValue(Property::PhotoBufferStatus) == nullptr,
+            "GetPropertyValue dereferenced a property that is not there - this is the crash");
+
+        // The guard must not swallow the normal path.
+        CameraProperty* present = new CameraProperty();
+        present->SetId(Property::PhotoBufferStatus);
+        present->SetCurrentValue(new PropertyValue(static_cast<UINT16>(0)));
+        CameraSettings populated;
+        populated.AddProperty(present);
+        Check(populated.size() == 1, "populated CameraSettings lost its property");
+        Check(populated.GetProperty(Property::PhotoBufferStatus) != nullptr,
+            "a property that is present was not found");
     }
 
     void TerminalFailures()
@@ -494,6 +520,7 @@ int main()
     try
     {
         std::cerr << "[device-removal] PropertyCopyContract\n"; PropertyCopyContract();
+        std::cerr << "[device-removal] MissingPropertyIsNotDereferenced\n"; MissingPropertyIsNotDereferenced();
         std::cerr << "[device-removal] TerminalFailures\n"; TerminalFailures();
         std::cerr << "[device-removal] ReopenAndNonterminalErrors\n"; ReopenAndNonterminalErrors();
         std::cerr << "[device-removal] CallbackOwnership\n"; CallbackOwnership();

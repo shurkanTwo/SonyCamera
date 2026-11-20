@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "SonyMTPCamera.h"
 #include <Ole2.h>
 #include <algorithm>
@@ -563,12 +563,20 @@ static bool NudgePropertyAndWait(Camera* camera, CameraProperty* desired, bool u
     // Now wait a bit to see if it updates - wait no more than 2 seconds
     int count = 0;
     int changed = 0;
-    CameraProperty* latest = nullptr;
 
     do
     {
         Sleep(50);
         std::unique_ptr<CameraProperty> latest(camera->GetProperty(desired->GetId()));
+
+        // A property can stop being reported underneath us: the camera drops
+        // off the bus mid-nudge and the next settings refresh comes back
+        // without it.  Failing the call says so; dereferencing null ends the
+        // process.  (The outer `latest` this loop used to shadow was dead.)
+        if (!latest)
+        {
+            throw CameraException(L"The camera stopped reporting the property being adjusted");
+        }
 
         changed = latest->Compare(current.get());
         *compareResult = latest->Compare(desired);
@@ -591,6 +599,12 @@ GetAvailablePropertyValues(HANDLE hCamera, Camera* camera, Property propertyId, 
     PropertyValue* desiredVal;
     std::unique_ptr<CameraSettings> cs(camera->GetSettings());
     CameraProperty* current = cs->GetProperty(propertyId);
+
+    if (!current)
+    {
+        throw CameraException(L"The camera does not report the property being scanned");
+    }
+
     CameraProperty* desired = current->Clone();
 
     switch (current->GetInfo()->GetType())
@@ -641,6 +655,12 @@ GetAvailablePropertyValues(HANDLE hCamera, Camera* camera, Property propertyId, 
     std::unique_ptr<CameraSettings> updated(camera->GetSettings());
 
     current = updated->GetProperty(propertyId);
+
+    if (!current)
+    {
+        delete desired;
+        throw CameraException(L"The camera stopped reporting the property being scanned");
+    }
 
     bool adjusted;
     int expectedCompareResult = current->Compare(desired);
@@ -1222,12 +1242,27 @@ SetPropertyValue(HANDLE hCamera, DWORD propertyId, DWORD value)
 
         std::unique_ptr<CameraProperty> v(camera->GetProperty((Property)propertyId));
 
-        LOGINFO(L"Property x%04x = %s", propertyId, v->ToString().c_str());
-
         PropertyValue val;
 
         if (v)
         {
+            // Logged inside the null check that was already sitting four lines
+            // below it.  Camera::GetProperty returns null whenever the property
+            // is not in the camera's current settings, and a camera that has
+            // stopped answering reports no properties at all - so this
+            // dereferenced null.  An access violation inside a P/Invoke is not
+            // a catchable exception: it took NINA down with it.
+            //
+            // Measured on the rig 2026-11-20 15:53:53.  The body answered the
+            // device-info query with a truncated payload, the driver logged
+            // "Unable to read WORD value as it would extend beyond end of data"
+            // and carried on with "Device Properties Supported 0 properties",
+            // and the next SetPropertyValue killed the host process.  The same
+            // crash happened twice on 2026-11-04, same fault offset, different
+            // managed stack - the offset is where coreclr reports an unhandled
+            // exception, not where any heap was corrupted.
+            LOGINFO(L"Property x%04x = %s", propertyId, v->ToString().c_str());
+
             // Try to just do it
             switch (v->GetInfo()->GetType())
             {
