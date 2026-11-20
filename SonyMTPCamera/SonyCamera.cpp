@@ -240,8 +240,11 @@ SonyCamera::SetProperty(const Property id, PropertyValue* value)
 
         memset(txdata, 0, size);
 
-        value->Write(txdata, size);
-        tx->SetData(txdata, size);
+        // Both take a DWORD. The cast is explicit to keep the narrowing out of
+        // the warning list; a property value's data is tens of bytes, so there
+        // is nothing here that a 32-bit count could lose.
+        value->Write(txdata, (DWORD)size);
+        tx->SetData(txdata, (DWORD)size);
 
         if (m_device->Send(tx))
         {
