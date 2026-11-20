@@ -188,6 +188,18 @@ CameraTask::IsComplete() const
     return this->status.currentStep == CAMERA_TASK_COMPLETE;
 }
 
+void
+CameraTask::Abandon()
+{
+    // Finish the task without running it, reporting failure.  The worker uses
+    // this for a task it can never step, so that the caller waiting in Run()
+    // is told the task failed instead of waiting for a completion that will
+    // not come.
+    status.currentStep = CAMERA_TASK_COMPLETE;
+    status.currentStepName = L"<abandoned>";
+    success = false;
+}
+
 bool
 CameraTask::Step(CameraTaskInfo& info)
 {

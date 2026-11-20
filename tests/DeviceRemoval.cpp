@@ -439,6 +439,52 @@ namespace
         Check(returnedWhileWorkerBusy, "callback blocked on busy worker during teardown");
         device.Close();
     }
+
+    class InitializeTask : public InitializeCameraTask
+    {
+    public:
+        bool Succeeded() const { return success; }
+    };
+
+    void FailedOpenDoesNotHang()
+    {
+        // The rig's 2026-11-20 lock-up: the camera had left the USB bus, so the
+        // reopen failed with x80070002.  The open left the worker's state at
+        // Connecting, the InitializeCameraTask that OpenDeviceEx runs next can
+        // only run on a Connected camera, and the worker held it instead of
+        // failing it - so the DLL never returned, NINA's 60s guard gave up and
+        // refused the camera until it was restarted, and the worker thread spun
+        // on a full core for the remaining five hours.
+        PortableDevice endpoint;
+        endpoint.openResult = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+        Transport device(endpoint);
+        TestCamera camera(&device);
+
+        Check(camera.Open() == INVALID_HANDLE_VALUE, "a device that would not open reported a camera handle");
+        Check(endpoint.opens == 1, "the device was never asked to open");
+
+        // Bounded on purpose: Run()'s own wait is infinite, so a regression
+        // here has to fail the test rather than hang the suite.  Heap-allocated
+        // and leaked when the wait fails, because a parked task is one the
+        // worker is still holding - freeing it would turn a legible failure
+        // into the access violation the production stack object produces.
+        auto* unrunnable = new InitializeTask();
+        unrunnable->Start(&camera);
+        Check(unrunnable->WaitFor(5000) == WAIT_OBJECT_0, "a task that could never run was never completed - this is the hang");
+        Check(unrunnable->IsComplete(), "abandoned task did not report itself complete");
+        Check(!unrunnable->Succeeded(), "a task that never ran reported success");
+        delete unrunnable;
+
+        // And the camera is usable the moment the device is back, without the
+        // host having to restart: nothing is left latched by the failure.
+        camera.GetWorker()->OnCameraStateChange(CameraState::Connected);
+        auto* runnable = new InitializeTask();
+        runnable->Start(&camera);
+        Check(runnable->WaitFor(5000) == WAIT_OBJECT_0, "initialize did not complete on a connected camera");
+        Check(runnable->Succeeded(), "initialize failed on a connected camera");
+        delete runnable;
+        camera.GetWorker()->OnCameraStateChange(CameraState::Disconnected);
+    }
 }
 
 int main()
@@ -454,6 +500,7 @@ int main()
         std::cerr << "[device-removal] RefreshAndDownload\n"; RefreshAndDownload();
         std::cerr << "[device-removal] ConcurrentShutdown\n"; ConcurrentShutdown();
         std::cerr << "[device-removal] BusyWorkerCallback\n"; BusyWorkerCallback();
+        std::cerr << "[device-removal] FailedOpenDoesNotHang\n"; FailedOpenDoesNotHang();
         std::cout << "{\"checks\":" << checks
             << ",\"terminalFaultScenarios\":48,\"productionObjectsLinked\":true,\"physicalCamera\":false}\n";
     }

@@ -97,6 +97,15 @@ DWORD CameraWorker::Run()
 
     while (!stopRequested)
     {
+        // How long to pause at the end of this iteration, once the mutex is
+        // back.  Sleeping while still holding it starves QueueTask, which waits
+        // on the same mutex: the comment below says the mutex is held only
+        // momentarily, and an idle sleep inside it made that untrue - a quarter
+        // of a second at a time, or half a second once the camera stopped
+        // answering, every iteration, with only microseconds in between for
+        // another thread to get in.
+        DWORD idlePause = 0;
+
         // Only reason mutex would be claimed is to set the exit flag, so while INFINITE may not be ideal,
         // we're expecting (essentially) an instant result
         DWORD waitResult = WaitForSingleObject(mutexHandle, INFINITE);
@@ -126,7 +135,7 @@ DWORD CameraWorker::Run()
             isIdleTask = false;
             idleCount = 0;
         }
-        else if (camera->LooksDisconnected())
+        else if (camera->LooksDisconnected() || lastCameraState != CameraState::Connected)
         {
             // The camera has stopped answering, so do not keep asking.  This
             // idle refresh only exists to spot a photo taken with the camera's
@@ -135,13 +144,21 @@ DWORD CameraWorker::Run()
             // faults inside the WPD stack and takes the hosting application
             // with it.  Anything genuinely queued still runs, and a queued
             // task that succeeds clears this state.
+            //
+            // The same applies before the camera has been opened at all, and
+            // after it has been closed: an idle refresh cannot run in any state
+            // but Connected, so creating one only to abandon it below would
+            // spin this loop and fill the log.  Worse, until the state check
+            // moved here it took the currentTask slot, and this loop only
+            // drains the queue while that slot is free - so a worker that
+            // started before the open was queued could never open its camera.
 #ifdef DEBUG
             LOGTRACE(L"Nothing to do, and the camera is not answering - not queuing an idle refresh");
 #endif
             isIdleTask = false;
             idleCount = 0;
 
-            Sleep(500);
+            idlePause = 500;
         }
         else
         {
@@ -152,17 +169,47 @@ DWORD CameraWorker::Run()
             isIdleTask = true;
             idleCount++;
 
-            Sleep(50);
+            idlePause = 50;
         }
 
-        if (currentTask && currentTask->SupportsCameraState(lastCameraState))
+        if (currentTask)
         {
-            CameraTaskInfo info;
+            bool complete = false;
+            bool stepped = false;
 
-            info.pCamera = camera;
-            info.pTask = currentTask;
+            if (currentTask->SupportsCameraState(lastCameraState))
+            {
+                CameraTaskInfo info;
 
-            bool complete = currentTask->Step(info);
+                info.pCamera = camera;
+                info.pTask = currentTask;
+
+                complete = currentTask->Step(info);
+                stepped = true;
+            }
+            else
+            {
+                // Nothing here will produce the state this task needs.  The
+                // only state transitions are the ones Camera::Open and
+                // Camera::Close make, and both of those run as tasks on this
+                // very thread - which cannot reach them while this slot is
+                // occupied.  Keeping the task therefore waited forever: the
+                // wait in CameraTask::Run never returned, the queue behind it
+                // was never drained, and this loop spun at full speed for as
+                // long as the process lived.
+                //
+                // Measured on the rig on 2026-11-20: an open that failed with
+                // x80070002 left the state at Connecting, the
+                // InitializeCameraTask that OpenDeviceEx runs next could never
+                // step, and NINA sat burning a whole core with its camera
+                // unusable until it was restarted.  Reporting the failure to
+                // whoever is waiting is both true and recoverable.
+                LOGERROR(L"Task %s cannot run while the camera is in state %d - failing it rather than waiting for a state that nothing will set",
+                    currentTask->Name().c_str(), (int)lastCameraState);
+
+                currentTask->Abandon();
+                complete = true;
+            }
 
             if (complete)
             {
@@ -182,13 +229,13 @@ DWORD CameraWorker::Run()
                     delete currentTask;
                 }
 
-                if (isIdleTask && idleCount % 20 == 0) {
+                if (stepped && isIdleTask && idleCount % 20 == 0) {
                     // Check to see if there's a photo waiting that we didn't get notified of
                     // This will just queue up a download - when the download completes
 #ifdef DEBUG
                     LOGTRACE(L"Checking to see if an image is waiting we haven't been told about");
 #endif
-                    std::unique_ptr<CameraSettings> cs(info.pCamera->GetSettings());
+                    std::unique_ptr<CameraSettings> cs(camera->GetSettings());
 
                     if (isImageReady(cs.get())) {
 #ifdef DEBUG
@@ -204,6 +251,13 @@ DWORD CameraWorker::Run()
         }
 
         ReleaseMutex(mutexHandle);
+
+        // Outside the mutex, so an idle pause cannot hold up a caller queueing
+        // work.  Nothing below the release touches shared state.
+        if (idlePause)
+        {
+            Sleep(idlePause);
+        }
     }
 
     CoUninitialize();
