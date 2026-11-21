@@ -87,7 +87,18 @@ CameraTask::Start(Camera* camera)
     // Create semaphore, get camera worker, initate and wait for response
     CameraWorker* pWorker = camera->GetWorker();
 
-    waiter = CreateSemaphore(nullptr, 1, 1, nullptr);
+    // Initial count 0, like Run() above. At 1 the semaphore was signalled
+    // before the task had run at all, so Cancel()'s wait on it returned
+    // WAIT_OBJECT_0 immediately and said the task had finished when the worker
+    // had not yet touched it. CancelCapture believed that and freed both the
+    // task and its shared TakePhotoTaskParams while the worker still owned
+    // them - a use-after-free that took the host down with it. Measured on the
+    // rig 2026-11-03: a cancel sent while the capture status still read Created
+    // killed NINA inside the same second, 0xc0000005 at SonyMTPCamera.dll
+    // +0x1fd79. At 0 the wait is a real wait: the worker releases this
+    // semaphore only when Step reports the task terminal, so a task that will
+    // not cancel within the timeout is reported as such and left in place.
+    waiter = CreateSemaphore(nullptr, 0, 1, nullptr);
     cancel = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 
     pWorker->QueueTask(this, waiter);
