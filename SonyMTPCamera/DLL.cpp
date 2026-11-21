@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "SonyMTPCamera.h"
 #include <Ole2.h>
 #include <algorithm>
@@ -147,7 +147,7 @@ GetDeviceCount()
 
     deviceManager->RefreshDevices();
 
-    DWORD count = deviceManager->GetFilteredDevices().size();
+    DWORD count = (DWORD)deviceManager->GetFilteredDevices().size();
 
     LOGTRACE(L"Out: GetDeviceCount() = %d", count);
 
@@ -179,7 +179,20 @@ OpenDeviceEx(LPWSTR deviceName, DWORD flags)
         {
             LOGINFO(L"OpenDevice: Found device... trying to create/open");
             result = GetCameraManager()->CreateCamera(*it, (flags & OPENDEVICEEX_OPEN_ANY_DEVICE) ? OPEN_OVERRIDE : 0);
-            Camera* camera = GetCameraManager()->GetCameraForHandle(result);
+            Camera* camera = result != INVALID_HANDLE_VALUE ? GetCameraManager()->GetCameraForHandle(result) : nullptr;
+
+            if (!camera)
+            {
+                // The open failed, so there is nothing to initialize.  Going on
+                // regardless is how a device that was no longer on the bus got
+                // an InitializeCameraTask it could never run, which blocked
+                // this call until the caller gave up and left the worker
+                // spinning for the life of the process.
+                LOGERROR(L"OpenDevice: '%s' did not open - not initializing a camera that is not there", deviceId.c_str());
+
+                result = INVALID_HANDLE_VALUE;
+                continue;
+            }
 
             try
             {
@@ -212,11 +225,16 @@ OpenDeviceEx(LPWSTR deviceName, DWORD flags)
             {
                 LOGERROR(L"Exception initializing camera: %s", gfe.GetMessage().c_str());
 
-                result = INVALID_HANDLE_VALUE;
+                // Remove it by the handle it was registered under.  Clearing
+                // result first meant this asked the manager to forget
+                // INVALID_HANDLE_VALUE, so the camera stayed in the map and was
+                // then deleted - leaving a dangling entry that the next open of
+                // the same device would find and use.
                 camera->Close();
                 GetCameraManager()->RemoveCamera(result);
                 delete camera;
                 camera = nullptr;
+                result = INVALID_HANDLE_VALUE;
             }
         }
     }
@@ -545,12 +563,20 @@ static bool NudgePropertyAndWait(Camera* camera, CameraProperty* desired, bool u
     // Now wait a bit to see if it updates - wait no more than 2 seconds
     int count = 0;
     int changed = 0;
-    CameraProperty* latest = nullptr;
 
     do
     {
         Sleep(50);
         std::unique_ptr<CameraProperty> latest(camera->GetProperty(desired->GetId()));
+
+        // A property can stop being reported underneath us: the camera drops
+        // off the bus mid-nudge and the next settings refresh comes back
+        // without it.  Failing the call says so; dereferencing null ends the
+        // process.  (The outer `latest` this loop used to shadow was dead.)
+        if (!latest)
+        {
+            throw CameraException(L"The camera stopped reporting the property being adjusted");
+        }
 
         changed = latest->Compare(current.get());
         *compareResult = latest->Compare(desired);
@@ -573,6 +599,12 @@ GetAvailablePropertyValues(HANDLE hCamera, Camera* camera, Property propertyId, 
     PropertyValue* desiredVal;
     std::unique_ptr<CameraSettings> cs(camera->GetSettings());
     CameraProperty* current = cs->GetProperty(propertyId);
+
+    if (!current)
+    {
+        throw CameraException(L"The camera does not report the property being scanned");
+    }
+
     CameraProperty* desired = current->Clone();
 
     switch (current->GetInfo()->GetType())
@@ -623,6 +655,12 @@ GetAvailablePropertyValues(HANDLE hCamera, Camera* camera, Property propertyId, 
     std::unique_ptr<CameraSettings> updated(camera->GetSettings());
 
     current = updated->GetProperty(propertyId);
+
+    if (!current)
+    {
+        delete desired;
+        throw CameraException(L"The camera stopped reporting the property being scanned");
+    }
 
     bool adjusted;
     int expectedCompareResult = current->Compare(desired);
@@ -871,7 +909,7 @@ GetPortableDeviceCount()
 {
     LOGTRACE(L"In: GetPortableDeviceCount()");
 
-    DWORD result = deviceManager->GetAllDevices(true).size();
+    DWORD result = (DWORD)deviceManager->GetAllDevices(true).size();
 
     LOGTRACE(L"Out: GetPortableDeviceCount() - returning %d", result);
 
@@ -923,7 +961,7 @@ GetSupportedDeviceCount()
 
     // Refresh before getting list
     deviceManager->GetAllDevices(true);
-    DWORD result = deviceManager->GetFilteredDevices().size();
+    DWORD result = (DWORD)deviceManager->GetFilteredDevices().size();
 
     LOGTRACE(L"Out: GetSupportedDeviceCount() - returning %d", result);
 
@@ -1057,7 +1095,7 @@ GetPropertyDescriptor(HANDLE hCamera, DWORD propertyId, PROPERTYDESCRIPTOR* desc
             descriptor->type = (WORD)info->GetType();
             descriptor->flags = (WORD)((WORD)info->GetAccess() || ((WORD)info->GetSonySpare() << 8));
             descriptor->name = exportString(name.empty() ? L"?" : name);
-            descriptor->valueCount = info->GetFormMode() == FormMode::ENUMERATION ? info->GetEnumeration().size() : 0;
+            descriptor->valueCount = info->GetFormMode() == FormMode::ENUMERATION ? (DWORD)info->GetEnumeration().size() : 0;
 
             #ifdef DEBUG
                 LOGTRACE(L"Out: GetPropertyDescriptor(x%p, x%04x, ...)", hCamera, propertyId);
@@ -1204,12 +1242,27 @@ SetPropertyValue(HANDLE hCamera, DWORD propertyId, DWORD value)
 
         std::unique_ptr<CameraProperty> v(camera->GetProperty((Property)propertyId));
 
-        LOGINFO(L"Property x%04x = %s", propertyId, v->ToString().c_str());
-
         PropertyValue val;
 
         if (v)
         {
+            // Logged inside the null check that was already sitting four lines
+            // below it.  Camera::GetProperty returns null whenever the property
+            // is not in the camera's current settings, and a camera that has
+            // stopped answering reports no properties at all - so this
+            // dereferenced null.  An access violation inside a P/Invoke is not
+            // a catchable exception: it took NINA down with it.
+            //
+            // Measured on the rig 2026-11-20 15:53:53.  The body answered the
+            // device-info query with a truncated payload, the driver logged
+            // "Unable to read WORD value as it would extend beyond end of data"
+            // and carried on with "Device Properties Supported 0 properties",
+            // and the next SetPropertyValue killed the host process.  The same
+            // crash happened twice on 2026-11-04, same fault offset, different
+            // managed stack - the offset is where coreclr reports an unhandled
+            // exception, not where any heap was corrupted.
+            LOGINFO(L"Property x%04x = %s", propertyId, v->ToString().c_str());
+
             // Try to just do it
             switch (v->GetInfo()->GetType())
             {
@@ -1582,7 +1635,7 @@ IMPEXP DWORD GetLensCount()
         lensPath << L"Lenses\\" << manufacturer;
 
         std::list<std::wstring> lenses = registry.GetChildKeys(lensPath.str());
-        count += lenses.size();
+        count += (DWORD)lenses.size();
     }
 
     registry.Close();

@@ -51,6 +51,7 @@ public:
     void SetParam2(void* param);
     void* GetParam2();
     void SetUserStatus(int userStatus);
+    void Abandon();
     bool Run(Camera* camera);
     std::wstring Name();
     bool SupportsCameraState(CameraState state);

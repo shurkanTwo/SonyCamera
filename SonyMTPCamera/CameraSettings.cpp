@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "CameraSettings.h"
 #include "CameraProperty.h"
 #include "Logger.h"
@@ -129,7 +129,8 @@ CameraSettings::cfind(const Property id) const
 int
 CameraSettings::size() const
 {
-    return m_properties.size();
+    // One camera's property map: tens of entries, nowhere near INT_MAX.
+    return (int)m_properties.size();
 }
 
 CameraProperty*
@@ -144,6 +145,14 @@ PropertyValue*
 CameraSettings::GetPropertyValue(Property id) const
 {
     CameraProperty* p = GetProperty(id);
+
+    // GetProperty returns null for an id the camera does not report, and this
+    // dereferenced it unconditionally - the same crash as SetPropertyValue, one
+    // layer down, reachable from every caller.
+    if (!p)
+    {
+        return nullptr;
+    }
 
     if (p->GetInfo()->GetType() != DataType::UNKNOWN)
     {

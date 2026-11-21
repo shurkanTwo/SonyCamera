@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "MTPDevice.h"
 #include "Camera.h"
 #include "CameraException.h"
@@ -209,6 +209,32 @@ namespace
         reused->SetCurrentValue(new PropertyValue(static_cast<UINT16>(7)));
         Check(property.GetCurrentValue()->GetUINT16() == 0, "property copy shared owned value");
         reused->~CameraProperty();
+    }
+
+    void MissingPropertyIsNotDereferenced()
+    {
+        // A camera that has stopped answering reports no properties at all.
+        // Measured on the rig 2026-11-20 15:53:53: the body returned a
+        // truncated device-info payload, the driver accepted it and logged
+        // "Device Properties Supported 0 properties", and the next property
+        // lookup was dereferenced with no check.  An access violation inside a
+        // P/Invoke is not a catchable exception, so NINA died outright.
+        CameraSettings empty;
+        Check(empty.size() == 0, "a default CameraSettings reported properties");
+        Check(empty.GetProperty(Property::PhotoBufferStatus) == nullptr,
+            "a property the camera does not report was invented");
+        Check(empty.GetPropertyValue(Property::PhotoBufferStatus) == nullptr,
+            "GetPropertyValue dereferenced a property that is not there - this is the crash");
+
+        // The guard must not swallow the normal path.
+        CameraProperty* present = new CameraProperty();
+        present->SetId(Property::PhotoBufferStatus);
+        present->SetCurrentValue(new PropertyValue(static_cast<UINT16>(0)));
+        CameraSettings populated;
+        populated.AddProperty(present);
+        Check(populated.size() == 1, "populated CameraSettings lost its property");
+        Check(populated.GetProperty(Property::PhotoBufferStatus) != nullptr,
+            "a property that is present was not found");
     }
 
     void TerminalFailures()
@@ -439,6 +465,52 @@ namespace
         Check(returnedWhileWorkerBusy, "callback blocked on busy worker during teardown");
         device.Close();
     }
+
+    class InitializeTask : public InitializeCameraTask
+    {
+    public:
+        bool Succeeded() const { return success; }
+    };
+
+    void FailedOpenDoesNotHang()
+    {
+        // The rig's 2026-11-20 lock-up: the camera had left the USB bus, so the
+        // reopen failed with x80070002.  The open left the worker's state at
+        // Connecting, the InitializeCameraTask that OpenDeviceEx runs next can
+        // only run on a Connected camera, and the worker held it instead of
+        // failing it - so the DLL never returned, NINA's 60s guard gave up and
+        // refused the camera until it was restarted, and the worker thread spun
+        // on a full core for the remaining five hours.
+        PortableDevice endpoint;
+        endpoint.openResult = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+        Transport device(endpoint);
+        TestCamera camera(&device);
+
+        Check(camera.Open() == INVALID_HANDLE_VALUE, "a device that would not open reported a camera handle");
+        Check(endpoint.opens == 1, "the device was never asked to open");
+
+        // Bounded on purpose: Run()'s own wait is infinite, so a regression
+        // here has to fail the test rather than hang the suite.  Heap-allocated
+        // and leaked when the wait fails, because a parked task is one the
+        // worker is still holding - freeing it would turn a legible failure
+        // into the access violation the production stack object produces.
+        auto* unrunnable = new InitializeTask();
+        unrunnable->Start(&camera);
+        Check(unrunnable->WaitFor(5000) == WAIT_OBJECT_0, "a task that could never run was never completed - this is the hang");
+        Check(unrunnable->IsComplete(), "abandoned task did not report itself complete");
+        Check(!unrunnable->Succeeded(), "a task that never ran reported success");
+        delete unrunnable;
+
+        // And the camera is usable the moment the device is back, without the
+        // host having to restart: nothing is left latched by the failure.
+        camera.GetWorker()->OnCameraStateChange(CameraState::Connected);
+        auto* runnable = new InitializeTask();
+        runnable->Start(&camera);
+        Check(runnable->WaitFor(5000) == WAIT_OBJECT_0, "initialize did not complete on a connected camera");
+        Check(runnable->Succeeded(), "initialize failed on a connected camera");
+        delete runnable;
+        camera.GetWorker()->OnCameraStateChange(CameraState::Disconnected);
+    }
 }
 
 int main()
@@ -448,12 +520,14 @@ int main()
     try
     {
         std::cerr << "[device-removal] PropertyCopyContract\n"; PropertyCopyContract();
+        std::cerr << "[device-removal] MissingPropertyIsNotDereferenced\n"; MissingPropertyIsNotDereferenced();
         std::cerr << "[device-removal] TerminalFailures\n"; TerminalFailures();
         std::cerr << "[device-removal] ReopenAndNonterminalErrors\n"; ReopenAndNonterminalErrors();
         std::cerr << "[device-removal] CallbackOwnership\n"; CallbackOwnership();
         std::cerr << "[device-removal] RefreshAndDownload\n"; RefreshAndDownload();
         std::cerr << "[device-removal] ConcurrentShutdown\n"; ConcurrentShutdown();
         std::cerr << "[device-removal] BusyWorkerCallback\n"; BusyWorkerCallback();
+        std::cerr << "[device-removal] FailedOpenDoesNotHang\n"; FailedOpenDoesNotHang();
         std::cout << "{\"checks\":" << checks
             << ",\"terminalFaultScenarios\":48,\"productionObjectsLinked\":true,\"physicalCamera\":false}\n";
     }

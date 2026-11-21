@@ -10,7 +10,7 @@ refreshSettings(CameraTaskInfo& info)
 {
     try
     {
-        bool succeeded = info.pCamera->RefreshSettings((int)info.pTask->GetParam1() != 0);
+        bool succeeded = info.pCamera->RefreshSettings((DWORD_PTR)info.pTask->GetParam1() != 0);
         info.pCamera->RecordSettingsRefreshResult(succeeded);
     }
     catch (CameraException& ex)
@@ -76,6 +76,87 @@ setProperty(CameraTaskInfo& info)
     return StateResult::Success;
 }
 
+// A release that does not reach the camera is worth retrying: the write costs
+// milliseconds and the alternative is a body that has to be drained flat.
+static const int SHUTTER_RELEASE_ATTEMPTS = 3;
+static const DWORD SHUTTER_RELEASE_RETRY_PAUSE_MS = 200;
+
+// How much longer than its own exposure a hold may last before it is reported.
+// The release is two MTP writes, so a few hundred milliseconds is normal.
+static const ULONGLONG SHUTTER_HOLD_TOLERANCE_MS = 2000;
+
+// One write of a shutter button property, with the exception the MTP layer can
+// throw turned into a false. A write that fails must not stop the other button
+// property being written: the camera is left with a button held either way, so
+// both have to be attempted.
+static bool
+writeShutterButton(CameraTaskInfo& info, Property id, PropertyValue* value)
+{
+    try
+    {
+        return info.pCamera->SetProperty(id, value);
+    }
+    catch (CameraException& ex)
+    {
+        LOGERROR(L"Shutter button property x%04x could not be written: %s", (int)id, ex.GetMessage().c_str());
+        return false;
+    }
+    catch (...)
+    {
+        LOGERROR(L"Shutter button property x%04x could not be written", (int)id);
+        return false;
+    }
+}
+
+// The exposure is timed by holding the shutter button down, so this release is
+// the only thing that ends it as far as the camera is concerned. When it does
+// not arrive the body is left with its shutter button pressed, and that is how
+// a camera that dropped off the bus comes back asking to be turned off and on
+// with the shutter parked over the sensor - a state an ordinary power cycle
+// does not clear.
+//
+// It used to be two unchecked writes. Neither result was read, so a failure was
+// silent, and because the first one can throw, a throw there meant the second
+// was never even attempted - leaving the half-press down as well.
+static bool
+releaseShutterButton(CameraTaskInfo& info, PropertyValue* up)
+{
+    bool fullReleased = false;
+    bool halfReleased = false;
+
+    for (int attempt = 1; attempt <= SHUTTER_RELEASE_ATTEMPTS; attempt++)
+    {
+        if (!fullReleased)
+        {
+            fullReleased = writeShutterButton(info, Property::ShutterFullDown, up);
+        }
+
+        if (!halfReleased)
+        {
+            halfReleased = writeShutterButton(info, Property::ShutterHalfDown, up);
+        }
+
+        if (fullReleased && halfReleased)
+        {
+            return true;
+        }
+
+        LOGERROR(L"Shutter button release attempt %d of %d incomplete (full down: %s, half down: %s)",
+            attempt, SHUTTER_RELEASE_ATTEMPTS,
+            fullReleased ? L"released" : L"STILL DOWN",
+            halfReleased ? L"released" : L"STILL DOWN");
+
+        if (attempt < SHUTTER_RELEASE_ATTEMPTS)
+        {
+            Sleep(SHUTTER_RELEASE_RETRY_PAUSE_MS);
+        }
+    }
+
+    LOGERROR(L"Shutter button could NOT be released. The camera is left holding its shutter button; the next capture that reaches it will clear the button before starting.");
+
+    return false;
+}
+
 StateResult
 doCapture(CameraTaskInfo& info)
 {
@@ -102,12 +183,29 @@ doCapture(CameraTaskInfo& info)
 
     info.pCamera->SetProperty(Property::ShutterFullDown, &down);
 
+    ULONGLONG heldFrom = GetTickCount64();
+
     WaitForSingleObject(info.pTask->GetCancelEventHandle(), (DWORD)(exposureTime * 1000));
 
-    info.pCamera->SetProperty(Property::ShutterFullDown, &up);
-    info.pCamera->SetProperty(Property::ShutterHalfDown, &up);
+    bool released = releaseShutterButton(info, &up);
+    ULONGLONG heldMs = GetTickCount64() - heldFrom;
+
     LOGINFO(L"Step 2: Shutter button up");
 
+    // Reported at error level so it survives the default log level. The hold is
+    // the only thing deciding how long the shutter stays open, and at the
+    // default level it left no trace at all: a hold that outlasted its exposure
+    // was invisible unless Info logging happened to be on.
+    if (!released || heldMs > (ULONGLONG)(exposureTime * 1000.0) + SHUTTER_HOLD_TOLERANCE_MS)
+    {
+        LOGERROR(L"Shutter button was held %llums for a %.3fs exposure (release %s)",
+            heldMs, exposureTime, released ? L"succeeded" : L"FAILED");
+    }
+
+    // Still a success even when the release failed. The camera may well have
+    // the frame, and the download that follows is the only chance of getting
+    // it; failing here would throw away an image to report a fault the log line
+    // above already reports.
     return StateResult::Success;
 }
 

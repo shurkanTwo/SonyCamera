@@ -98,7 +98,10 @@ MTPDevice::Open()
                 m_openCount++;
                 m_handle = CreateEvent(nullptr, false, false, nullptr);
 
-                LOGINFO(L"x%p - Opened() with handle %p", (void*)this, (DWORD)m_handle);
+                // %p reads a pointer-sized argument.  Passing a DWORD here
+                // left it reading the next four bytes off the stack, so the
+                // handle in the log was never the handle.
+                LOGINFO(L"x%p - Opened() with handle %p", (void*)this, (void*)m_handle);
             }
             else
             {
@@ -107,6 +110,14 @@ MTPDevice::Open()
                 // with an unopen device.
                 m_device->Release();
                 m_device = nullptr;
+
+                // Say so explicitly rather than returning whatever m_handle
+                // happens to hold.  Every caller reads the return value as
+                // "handle, or INVALID_HANDLE_VALUE", and a stale handle left
+                // by an earlier session would read as a successful open.
+                LOGTRACE(L"Out: MTPDevice::Open - open failed");
+
+                return INVALID_HANDLE_VALUE;
             }
         }
         else
@@ -123,7 +134,7 @@ MTPDevice::Open()
         LOGTRACE(L"Incrementing OpenCount to %d", m_openCount);
     }
 
-    LOGTRACE(L"Out: MTPDevice::Open - now open %d times with handle x%08x", m_openCount, (DWORD)m_handle);
+    LOGTRACE(L"Out: MTPDevice::Open - now open %d times with handle x%08x", m_openCount, (DWORD)(DWORD_PTR)m_handle);
 
     return m_handle;
 }

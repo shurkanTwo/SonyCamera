@@ -120,8 +120,8 @@ Logger::Log(LogLevel level, const WCHAR* format, ...)
 
                 std::wstring prefix = builder.str();
 
-                WriteFile(s_logFileHandle, prefix.c_str(), prefix.size() * sizeof(WCHAR), nullptr, nullptr);
-                WriteFile(s_logFileHandle, buffer, wcslen(buffer) * sizeof(WCHAR), nullptr, nullptr);
+                WriteFile(s_logFileHandle, prefix.c_str(), (DWORD)(prefix.size() * sizeof(WCHAR)), nullptr, nullptr);
+                WriteFile(s_logFileHandle, buffer, (DWORD)(wcslen(buffer) * sizeof(WCHAR)), nullptr, nullptr);
                 WriteFile(s_logFileHandle, L"\n", sizeof(WCHAR), nullptr, nullptr);
 
                 FlushFileBuffers(s_logFileHandle);
